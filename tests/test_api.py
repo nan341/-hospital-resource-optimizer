@@ -1,0 +1,90 @@
+import pytest
+from fastapi.testclient import TestClient
+from src.api.main import app
+from src.db.init_db import init_database
+
+@pytest.fixture(autouse=True)
+def setup_api_db():
+    init_database(drop_existing=True)
+    yield
+
+client = TestClient(app)
+
+def test_get_departments():
+    response = client.get("/departments")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 4
+    dept_ids = [d["department_id"] for d in data]
+    assert "er" in dept_ids
+    assert "general_ward" in dept_ids
+    assert "icu" in dept_ids
+    assert "pediatrics" in dept_ids
+    # Check diagnostic fields
+    assert all("free_diagnostics" in d for d in data)
+
+def test_get_beds():
+    response = client.get("/beds")
+    assert response.status_code == 200
+    beds = response.json()
+    assert len(beds) == 44 # 8 + 20 + 6 + 10
+
+    # Filter by department
+    res_er = client.get("/beds?department_id=er")
+    assert res_er.status_code == 200
+    assert len(res_er.json()) == 8
+
+def test_get_diagnostics():
+    response = client.get("/diagnostics")
+    assert response.status_code == 200
+    diagnostics = response.json()
+    assert len(diagnostics) == 8 # 2 per department * 4 departments
+    assert all(d["status"] == "free" for d in diagnostics)
+
+    # Filter by department
+    res_icu = client.get("/diagnostics?department_id=icu")
+    assert res_icu.status_code == 200
+    assert len(res_icu.json()) == 2
+
+def test_get_staff():
+    response = client.get("/staff")
+    assert response.status_code == 200
+    staff = response.json()
+    assert len(staff) == 22
+
+def test_get_events():
+    response = client.get("/events?limit=10")
+    assert response.status_code == 200
+    events = response.json()
+    assert isinstance(events, list)
+
+def test_forecast_endpoint():
+    response = client.get("/forecast/er")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["department_id"] == "er"
+    assert "predicted_count" in data
+    assert "hourly_breakdown" in data
+
+def test_simulation_controls_and_surge():
+    # Start simulation
+    res_start = client.post("/simulation/start", json={"speed_factor": 3.0})
+    assert res_start.status_code == 200
+    assert res_start.json()["status"] == "started"
+
+    # Trigger surge
+    res_surge = client.post("/simulation/surge", json={"department": "er", "patient_count": 4})
+    assert res_surge.status_code == 200
+    data = res_surge.json()
+    assert data["status"] == "surge_triggered"
+    assert data["patient_count"] == 4
+
+    # Stop simulation
+    res_stop = client.post("/simulation/stop")
+    assert res_stop.status_code == 200
+    assert res_stop.json()["status"] == "stopped"
+
+    # Check status
+    res_status = client.get("/simulation/status")
+    assert res_status.status_code == 200
+    assert res_status.json()["total_patients_generated"] >= 4

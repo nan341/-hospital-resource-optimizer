@@ -1,0 +1,59 @@
+{
+  "hourly_multipliers": [
+    0.45,
+    0.35,
+    0.28,
+    0.22,
+    0.25,
+    0.38,
+    0.65,
+    0.95,
+    1.25,
+    1.45,
+    1.55,
+    1.5,
+    1.4,
+    1.35,
+    1.3,
+    1.25,
+    1.3,
+    1.4,
+    1.45,
+    1.35,
+    1.15,
+    0.9,
+    0.7,
+    0.55
+  ],
+  "severity_distribution": {
+    "critical": 0.15,
+    "moderate": 0.45,
+    "low": 0.4
+  },
+  "los_distributions": {
+    "critical": {
+      "mean_hours": 18.0,
+      "std_hours": 8.0,
+      "gamma_shape": 5.0625,
+      "gamma_scale": 3.5555
+    },
+    "moderate": {
+      "mean_hours": 6.5,
+      "std_hours": 3.0,
+      "gamma_shape": 4.694,
+      "gamma_scale": 1.385
+    },
+    "low": {
+      "mean_hours": 2.5,
+      "std_hours": 1.2,
+      "gamma_shape": 4.34,
+      "gamma_scale": 0.576
+    }
+  },
+  "department_base_rates": {
+    "er": 4.5,
+    "general_ward": 2.2,
+    "icu": 0.8,
+    "pediatrics": 1.8
+  }
+}
