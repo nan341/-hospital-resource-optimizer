@@ -110,17 +110,22 @@ async def background_allocation_and_broadcast_worker():
                     for b in session.query(Bed).all()
                 ]
 
-                all_staff = [
-                    {
+                all_staff = []
+                for s in session.query(Staff).all():
+                    active_count = session.query(Patient).filter(
+                        Patient.assigned_staff_id == s.staff_id,
+                        Patient.status == "admitted"
+                    ).count()
+                    all_staff.append({
                         "staff_id": s.staff_id,
                         "role": s.role,
                         "department_id": s.department_id,
                         "status": s.status,
                         "shift_start": s.shift_start,
-                        "shift_end": s.shift_end
-                    }
-                    for s in session.query(Staff).all()
-                ]
+                        "shift_end": s.shift_end,
+                        "active_patients": active_count,
+                        "is_busy": active_count > 0
+                    })
 
                 waiting_patients = [
                     {

@@ -20,6 +20,10 @@ SEVERITY_WEIGHTS = {
     "low": 3
 }
 
+# Clinical safety constants
+CRITICAL_CARE_DEPTS = {"icu"}  # departments that must never donate staff
+MIN_STAFF_FLOOR = 2  # departments must keep at least this many staff after donating
+
 def get_department_occupancy(session: Session) -> Dict[str, Dict[str, Any]]:
     """Calculates bed occupancy statistics per department."""
     departments = session.query(Department).all()
@@ -84,6 +88,7 @@ def evaluate_staff_rebalancing(
     """
     Compares 2-hour predicted load against current on-duty staff capacity per department.
     Identifies if a heavily burdened department needs staff reallocated from a slack department.
+    ICU is protected from donating staff, and slack departments are ranked by absolute spare capacity.
     """
     reassignments = []
     departments = session.query(Department).all()
@@ -113,20 +118,30 @@ def evaluate_staff_rebalancing(
             "demand_per_staff": demand_per_staff
         }
 
-    # Find overloaded departments (demand_per_staff > 3.0 or high threshold)
+    # Find overloaded departments (demand_per_staff > 3.5)
     overloaded = [d for d, s in dept_stats.items() if s["demand_per_staff"] > 3.5 and s["on_duty_staff"] < 10]
-    # Find slack departments (demand_per_staff < 1.5 and on_duty_staff > 2)
-    slack = [d for d, s in dept_stats.items() if s["demand_per_staff"] < 1.5 and s["on_duty_staff"] > 2]
+
+    # Find slack departments:
+    # 1. Exclude critical care departments (ICU)
+    # 2. Demand per staff < 1.5
+    # 3. Staff count above minimum floor (> MIN_STAFF_FLOOR)
+    slack = [
+        d for d, s in dept_stats.items()
+        if d not in CRITICAL_CARE_DEPTS
+        and s["demand_per_staff"] < 1.5
+        and s["on_duty_staff"] > MIN_STAFF_FLOOR
+    ]
 
     if overloaded and slack:
-        # Sort overloaded by highest demand ratio, slack by lowest
+        # Sort overloaded by highest demand ratio
         overloaded.sort(key=lambda d: dept_stats[d]["demand_per_staff"], reverse=True)
-        slack.sort(key=lambda d: dept_stats[d]["demand_per_staff"])
+        # Sort slack by descending ABSOLUTE spare capacity (on_duty_staff - MIN_STAFF_FLOOR)
+        slack.sort(key=lambda d: dept_stats[d]["on_duty_staff"] - MIN_STAFF_FLOOR, reverse=True)
 
         target_dept_id = overloaded[0]
         source_dept_id = slack[0]
 
-        if target_dept_id != source_dept_id:
+        if target_dept_id != source_dept_id and source_dept_id not in CRITICAL_CARE_DEPTS:
             # Find a movable staff member in source dept
             staff_to_move = session.query(Staff).filter(
                 Staff.department_id == source_dept_id,

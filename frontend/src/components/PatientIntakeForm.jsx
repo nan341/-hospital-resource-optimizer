@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { UserPlus, Flame, AlertCircle, HeartPulse, CheckCircle2, AlertTriangle, Send } from 'lucide-react';
-import { registerPatientIntake } from '../api';
+import React, { useState, useRef, useEffect } from 'react';
+import { UserPlus, Flame, AlertCircle, HeartPulse, CheckCircle2, AlertTriangle, Clock, Send, ShieldCheck, BedDouble } from 'lucide-react';
+import { registerPatientIntake, getPatientById } from '../api';
 
 export default function PatientIntakeForm({ departments = [], onIntakeSuccess }) {
   const [departmentNeeded, setDepartmentNeeded] = useState('er');
@@ -9,6 +9,58 @@ export default function PatientIntakeForm({ departments = [], onIntakeSuccess })
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
+
+  const pollIntervalRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const startPatientStatusPolling = (patientId) => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    pollIntervalRef.current = setInterval(async () => {
+      attempts += 1;
+      try {
+        const res = await getPatientById(patientId);
+        const p = res.data;
+
+        if (p.status === 'admitted') {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          setMessage({
+            type: 'admitted',
+            text: `Assigned Bed ${p.assigned_bed_id || 'Allocated'}, Staff ${p.assigned_staff_id || 'On Duty'}`
+          });
+          if (onIntakeSuccess) onIntakeSuccess(p);
+        } else if (attempts >= maxAttempts) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          if (p.status === 'waiting') {
+            setMessage({
+              type: 'queued',
+              text: `Still queued — no bed currently available`
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Error polling patient status:', err);
+        if (attempts >= maxAttempts) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+      }
+    }, 1500);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -24,17 +76,24 @@ export default function PatientIntakeForm({ departments = [], onIntakeSuccess })
       };
 
       const response = await registerPatientIntake(payload);
+      const patientId = response.data.patient_id;
+
+      // Stage 1: Immediately show registered and waiting in queue
       setMessage({
-        type: 'success',
-        text: `Patient ${response.data.patient_id} registered into ${departmentNeeded.toUpperCase()} queue!`
+        type: 'waiting',
+        text: `Registered ${patientId} — waiting in queue...`
       });
 
-      // Clear only notes on success, preserve department and severity for rapid entry
+      // Clear notes field on success, keep department & severity
       setNotes('');
 
       if (onIntakeSuccess) {
         onIntakeSuccess(response.data);
       }
+
+      // Start live polling to track allocation transition
+      startPatientStatusPolling(patientId);
+
     } catch (err) {
       const errorDetail = err.response?.data?.detail || err.message;
       setMessage({
@@ -43,7 +102,6 @@ export default function PatientIntakeForm({ departments = [], onIntakeSuccess })
       });
     } finally {
       setLoading(false);
-      setTimeout(() => setMessage(null), 4500);
     }
   };
 
@@ -172,21 +230,29 @@ export default function PatientIntakeForm({ departments = [], onIntakeSuccess })
           </div>
         </div>
 
-        {/* Inline Feedback Message */}
+        {/* Live Multi-Stage Inline Status / Feedback */}
         {message && (
           <div
-            className={`p-2.5 rounded-lg text-xs flex items-center space-x-2 border ${
-              message.type === 'success'
-                ? 'bg-emerald-950/80 border-emerald-600/80 text-emerald-200'
-                : 'bg-rose-950/80 border-rose-600/80 text-rose-200'
+            className={`p-2.5 rounded-lg text-xs flex items-center space-x-2 border transition-all ${
+              message.type === 'admitted'
+                ? 'bg-emerald-950/80 border-emerald-500 text-emerald-200 shadow-md shadow-emerald-950/50'
+                : message.type === 'waiting'
+                ? 'bg-blue-950/80 border-blue-600 text-blue-200 animate-pulse'
+                : message.type === 'queued'
+                ? 'bg-slate-900 border-slate-700 text-slate-300'
+                : 'bg-rose-950/80 border-rose-600 text-rose-200'
             }`}
           >
-            {message.type === 'success' ? (
+            {message.type === 'admitted' ? (
               <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            ) : message.type === 'waiting' ? (
+              <Clock className="w-4 h-4 text-blue-400 flex-shrink-0 animate-spin" style={{ animationDuration: '3s' }} />
+            ) : message.type === 'queued' ? (
+              <BedDouble className="w-4 h-4 text-slate-400 flex-shrink-0" />
             ) : (
               <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
             )}
-            <span className="truncate">{message.text}</span>
+            <span className="truncate font-medium">{message.text}</span>
           </div>
         )}
 

@@ -13,6 +13,7 @@ const api = axios.create({
 export const getDepartments = () => api.get('/departments');
 export const getBeds = (departmentId) => api.get('/beds', { params: { department_id: departmentId } });
 export const getPatients = (status) => api.get('/patients', { params: { status } });
+export const getPatientById = (patientId) => api.get(`/patients/${patientId}`);
 export const getStaff = (departmentId) => api.get('/staff', { params: { department_id: departmentId } });
 export const getDiagnostics = (departmentId) => api.get('/diagnostics', { params: { department_id: departmentId } });
 export const getEvents = (limit = 50) => api.get('/events', { params: { limit } });

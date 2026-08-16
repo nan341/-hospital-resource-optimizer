@@ -171,3 +171,31 @@ def test_load_aware_staff_assignment():
     finally:
         session.close()
 
+def test_staff_rebalancing_protects_icu():
+    from src.allocation.rules import evaluate_staff_rebalancing
+    session = SessionLocal()
+    try:
+        # Create mock 2-hour forecasts where ER is heavily overloaded (projected demand: 18)
+        # General Ward (8 staff) and ICU (6 staff) are both at very low load
+        forecasts = {
+            "er": {"predicted_count": 18.0},
+            "general_ward": {"predicted_count": 1.0},
+            "icu": {"predicted_count": 0.5},
+            "pediatrics": {"predicted_count": 1.0}
+        }
+
+        reassignments = evaluate_staff_rebalancing(session, forecasts)
+
+        # Confirm reassignment was triggered
+        assert len(reassignments) > 0
+
+        # Confirm source department is general_ward and NEVER icu
+        for r in reassignments:
+            assert r["from_dept"] == "general_ward"
+            assert r["from_dept"] != "icu"
+            assert r["to_dept"] == "er"
+
+    finally:
+        session.close()
+
+

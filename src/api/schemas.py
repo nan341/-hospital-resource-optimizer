@@ -37,6 +37,8 @@ class StaffResponse(BaseModel):
     shift_start: str
     shift_end: str
     status: str
+    active_patients: int = 0
+    is_busy: bool = False
 
 class DiagnosticFacilityResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
