@@ -104,6 +104,27 @@ class HospitalAllocationEngine:
             )
             session.add(diag_event)
 
+    def find_least_loaded_staff(self, session: Session, department_id: str) -> Optional[Staff]:
+        """Finds the on-duty staff member with the fewest currently-admitted patients."""
+        from sqlalchemy import func
+        staff_load = (
+            session.query(Staff.staff_id, func.count(Patient.patient_id).label("load"))
+            .outerjoin(
+                Patient,
+                (Patient.assigned_staff_id == Staff.staff_id) & (Patient.status == "admitted")
+            )
+            .filter(
+                Staff.department_id == department_id,
+                Staff.status.in_(["on_duty", "reassigned"])
+            )
+            .group_by(Staff.staff_id)
+            .order_by("load")
+            .first()
+        )
+        if not staff_load:
+            return None
+        return session.query(Staff).filter_by(staff_id=staff_load[0]).first()
+
     def run_allocation_cycle(self, session: Optional[Session] = None) -> Dict[str, Any]:
         """
         Main execution loop for priority-queue resource allocation:
@@ -174,11 +195,8 @@ class HospitalAllocationEngine:
                     patient.status = "admitted"
                     patient.assigned_bed_id = primary_bed.bed_id
 
-                    # Assign staff if available
-                    staff = session.query(Staff).filter(
-                        Staff.department_id == patient.department_needed,
-                        Staff.status.in_(["on_duty", "reassigned"])
-                    ).first()
+                    # Assign load-aware least-burdened staff member
+                    staff = self.find_least_loaded_staff(session, patient.department_needed)
                     if staff:
                         patient.assigned_staff_id = staff.staff_id
 
@@ -211,11 +229,8 @@ class HospitalAllocationEngine:
                         overflow_dept = overflow_bed.department
                         overflow_dept_name = overflow_dept.name if overflow_dept else overflow_bed.department_id
 
-                        # Assign staff in overflow department
-                        staff = session.query(Staff).filter(
-                            Staff.department_id == overflow_bed.department_id,
-                            Staff.status.in_(["on_duty", "reassigned"])
-                        ).first()
+                        # Assign load-aware least-burdened staff in overflow department
+                        staff = self.find_least_loaded_staff(session, overflow_bed.department_id)
                         if staff:
                             patient.assigned_staff_id = staff.staff_id
 

@@ -18,6 +18,8 @@ export const getDiagnostics = (departmentId) => api.get('/diagnostics', { params
 export const getEvents = (limit = 50) => api.get('/events', { params: { limit } });
 export const getForecast = (departmentId, horizonHours = 2) => api.get(`/forecast/${departmentId}`, { params: { horizon_hours: horizonHours } });
 
+export const registerPatientIntake = (data) => api.post('/patients/intake', data);
+
 export const startSimulation = (speedFactor = 2.0) => api.post('/simulation/start', { speed_factor: speedFactor });
 export const stopSimulation = () => api.post('/simulation/stop');
 export const triggerSurge = (department = 'er', patientCount = 8) => api.post('/simulation/surge', { department, patient_count: patientCount });

@@ -88,3 +88,38 @@ def test_simulation_controls_and_surge():
     res_status = client.get("/simulation/status")
     assert res_status.status_code == 200
     assert res_status.json()["total_patients_generated"] >= 4
+
+def test_patient_intake():
+    # 1. Test successful patient intake
+    payload = {
+        "department_needed": "er",
+        "severity": "critical",
+        "predicted_stay_hours": 6.0,
+        "notes": "Severe chest pain and shortness of breath"
+    }
+    response = client.post("/patients/intake", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "registered"
+    assert data["patient_id"].startswith("PAT-")
+    patient_id = data["patient_id"]
+
+    # 2. Confirm patient is in waiting status
+    res_waiting = client.get("/patients?status=waiting")
+    assert res_waiting.status_code == 200
+    waiting_ids = [p["patient_id"] for p in res_waiting.json()]
+    assert patient_id in waiting_ids
+
+    # 3. Confirm arrival event was logged
+    res_events = client.get("/events?limit=10")
+    assert res_events.status_code == 200
+    events = res_events.json()
+    assert any(e["entity_id"] == patient_id and e["triggered_by"] == "manual" for e in events)
+
+    # 4. Test invalid department returns 404
+    res_bad_dept = client.post("/patients/intake", json={
+        "department_needed": "nonexistent_dept",
+        "severity": "moderate"
+    })
+    assert res_bad_dept.status_code == 404
+

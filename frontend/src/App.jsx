@@ -10,7 +10,8 @@ import {
   Wifi,
   WifiOff,
   ShieldAlert,
-  BarChart3
+  BarChart3,
+  UserPlus
 } from 'lucide-react';
 import {
   BarChart,
@@ -26,10 +27,13 @@ import BedMap from './components/BedMap';
 import PatientQueue from './components/PatientQueue';
 import EventFeed from './components/EventFeed';
 import SurgeAlert from './components/SurgeAlert';
+import StaffPanel from './components/StaffPanel';
+import PatientIntakeForm from './components/PatientIntakeForm';
 
 import {
   getDepartments,
   getBeds,
+  getStaff,
   getPatients,
   getDiagnostics,
   getEvents,
@@ -40,6 +44,7 @@ import {
 export default function App() {
   const [departments, setDepartments] = useState([]);
   const [beds, setBeds] = useState([]);
+  const [staff, setStaff] = useState([]);
   const [waitingPatients, setWaitingPatients] = useState([]);
   const [events, setEvents] = useState([]);
   const [diagnostics, setDiagnostics] = useState([]);
@@ -55,9 +60,10 @@ export default function App() {
   // Initial Data Fetch
   const loadInitialData = async () => {
     try {
-      const [deptRes, bedsRes, patientsRes, diagRes, eventsRes, simRes] = await Promise.all([
+      const [deptRes, bedsRes, staffRes, patientsRes, diagRes, eventsRes, simRes] = await Promise.all([
         getDepartments(),
         getBeds(),
+        getStaff(),
         getPatients('waiting'),
         getDiagnostics(),
         getEvents(40),
@@ -66,6 +72,7 @@ export default function App() {
 
       setDepartments(deptRes.data);
       setBeds(bedsRes.data);
+      setStaff(staffRes.data);
       setWaitingPatients(patientsRes.data);
       setDiagnostics(diagRes.data);
       setEvents(eventsRes.data);
@@ -96,10 +103,10 @@ export default function App() {
           if (data.type === 'state_update') {
             if (data.departments) setDepartments(data.departments);
             if (data.beds) setBeds(data.beds);
+            if (data.staff) setStaff(data.staff);
             if (data.waiting_patients) setWaitingPatients(data.waiting_patients);
             if (data.recent_events) {
               setEvents(data.recent_events);
-              // Check if any recent event is a critical_no_capacity alert
               const topAlert = data.recent_events.find((e) => e.event_type === 'critical_no_capacity');
               if (topAlert) {
                 setCriticalAlert(topAlert);
@@ -146,6 +153,7 @@ export default function App() {
   const criticalInQueue = waitingPatients.filter((p) => p.severity === 'critical').length;
   const freeDiagnosticsCount = diagnostics.filter((d) => d.status === 'free').length;
   const totalDiagnosticsCount = diagnostics.length || 8;
+  const onDutyStaffCount = staff.filter((s) => s.status === 'on_duty' || s.status === 'reassigned').length;
 
   // Prepare chart data for 2-hour forecasts
   const forecastChartData = Object.keys(forecasts).map((deptId) => {
@@ -171,11 +179,11 @@ export default function App() {
               <h1 className="text-xl md:text-2xl font-black tracking-tight text-white flex items-center gap-2">
                 HOSPITAL RESOURCE OPTIMIZER
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
-                  v1.0 Real-Time
+                  v1.1 Real-Time
                 </span>
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Dynamic Priority-Queue Allocation • 2-Hour Demand Forecasting • Real-Time Bed & Diagnostic Orchestration
+                Load-Aware Staff Allocation • Manual Intake • 2-Hour Demand Forecasting • Bed & Diagnostic Orchestration
               </p>
             </div>
           </div>
@@ -270,19 +278,19 @@ export default function App() {
           <p className="text-[10px] text-slate-500 mt-1">CT, X-Ray, Ultrasound, ECG</p>
         </div>
 
-        {/* Demand Forecasting Forecast (2-hr ahead) */}
+        {/* On-Duty Clinical Staff */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow col-span-2 sm:col-span-1">
           <div className="flex items-center justify-between text-slate-400 text-xs">
-            <span>2h Demand Forecast</span>
-            <TrendingUp className="w-4 h-4 text-purple-400" />
+            <span>Clinical Staff</span>
+            <Users className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-2xl font-black text-purple-300">
-              {Object.values(forecasts).reduce((acc, curr) => acc + (curr.predicted_count || 0), 0).toFixed(0)}
+            <span className="text-2xl font-black text-indigo-300">
+              {onDutyStaffCount}/{staff.length || 22}
             </span>
-            <span className="text-xs text-slate-400 font-mono">Total Pts</span>
+            <span className="text-xs text-slate-400 font-mono">On Duty</span>
           </div>
-          <p className="text-[10px] text-slate-500 mt-1">Seasonality adjusted ML</p>
+          <p className="text-[10px] text-slate-500 mt-1">Load-balanced dispatch</p>
         </div>
       </section>
 
@@ -294,18 +302,27 @@ export default function App() {
         onSurgeSuccess={loadInitialData}
       />
 
-      {/* 2-Hour Demand Forecast Chart Strip */}
-      {forecastChartData.length > 0 && (
-        <section className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-lg">
+      {/* Control Split: Patient Intake Form & 2-Hour Demand Forecast Strip */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left: Patient Intake Form (5 cols) */}
+        <div className="lg:col-span-5">
+          <PatientIntakeForm
+            departments={departments}
+            onIntakeSuccess={loadInitialData}
+          />
+        </div>
+
+        {/* Right: 2-Hour Demand Forecast Chart Strip (7 cols) */}
+        <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-lg flex flex-col justify-between">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center space-x-2">
               <BarChart3 className="w-4 h-4 text-cyan-400" />
-              <h3 className="font-bold text-slate-200 text-sm">2-Hour Departmental Demand Forecast (Rolling Seasonality Adjusted)</h3>
+              <h3 className="font-bold text-slate-200 text-sm">2-Hour Departmental Demand Forecast</h3>
             </div>
-            <span className="text-xs text-slate-400">Predicted incoming arrivals with 80% CI</span>
+            <span className="text-xs text-slate-400">Seasonality Adjusted (80% CI)</span>
           </div>
 
-          <div className="h-28 w-full">
+          <div className="h-44 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={forecastChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <XAxis dataKey="department" stroke="#64748b" fontSize={11} tickLine={false} />
@@ -322,8 +339,13 @@ export default function App() {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </section>
-      )}
+        </div>
+      </div>
+
+      {/* Staff Roster Panel (Fix 3) */}
+      <section>
+        <StaffPanel staff={staff} departments={departments} />
+      </section>
 
       {/* Main Grid: Bed Map (Left 7 Cols) and Patient Queue + Event Stream (Right 5 Cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

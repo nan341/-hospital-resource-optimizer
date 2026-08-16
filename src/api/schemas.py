@@ -61,6 +61,18 @@ class PatientResponse(BaseModel):
     assigned_bed_id: Optional[str] = None
     assigned_staff_id: Optional[str] = None
 
+class PatientIntakeRequest(BaseModel):
+    department_needed: str = Field(..., description="Target department ID (e.g. er, general_ward, icu, pediatrics)")
+    severity: str = Field(..., pattern="^(critical|moderate|low)$", description="Acuity level: critical, moderate, low")
+    predicted_stay_hours: float = Field(default=4.0, ge=0.5, le=336.0, description="Estimated stay duration in hours")
+    notes: Optional[str] = Field(default=None, max_length=200, description="Optional clinical/admission notes")
+
+class PatientIntakeResponse(BaseModel):
+    status: str
+    patient_id: str
+    arrival_time: str
+
+
 class EventLogResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

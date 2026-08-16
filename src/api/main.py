@@ -84,6 +84,10 @@ async def background_allocation_and_broadcast_worker():
                     avail = session.query(Bed).filter_by(department_id=d.department_id, status="available").count()
                     free_diag = session.query(DiagnosticFacility).filter_by(department_id=d.department_id, status="free").count()
                     tot_diag = session.query(DiagnosticFacility).filter_by(department_id=d.department_id).count()
+                    on_duty = session.query(Staff).filter(
+                        Staff.department_id == d.department_id,
+                        Staff.status.in_(["on_duty", "reassigned"])
+                    ).count()
                     dept_data.append({
                         "department_id": d.department_id,
                         "name": d.name,
@@ -91,7 +95,8 @@ async def background_allocation_and_broadcast_worker():
                         "occupied_beds": occ,
                         "available_beds": avail,
                         "free_diagnostics": free_diag,
-                        "total_diagnostics": tot_diag
+                        "total_diagnostics": tot_diag,
+                        "on_duty_staff": on_duty
                     })
 
                 all_beds = [
@@ -103,6 +108,18 @@ async def background_allocation_and_broadcast_worker():
                         "current_patient_id": b.current_patient_id
                     }
                     for b in session.query(Bed).all()
+                ]
+
+                all_staff = [
+                    {
+                        "staff_id": s.staff_id,
+                        "role": s.role,
+                        "department_id": s.department_id,
+                        "status": s.status,
+                        "shift_start": s.shift_start,
+                        "shift_end": s.shift_end
+                    }
+                    for s in session.query(Staff).all()
                 ]
 
                 waiting_patients = [
@@ -148,6 +165,7 @@ async def background_allocation_and_broadcast_worker():
                     "timestamp": datetime.now().isoformat(),
                     "departments": dept_data,
                     "beds": all_beds,
+                    "staff": all_staff,
                     "waiting_patients": waiting_patients,
                     "recent_events": recent_events,
                     "diagnostics": all_diagnostics,
