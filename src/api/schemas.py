@@ -62,12 +62,16 @@ class PatientResponse(BaseModel):
     status: str
     assigned_bed_id: Optional[str] = None
     assigned_staff_id: Optional[str] = None
+    age: Optional[int] = None
+    reason_for_visit: Optional[str] = None
 
 class PatientIntakeRequest(BaseModel):
     department_needed: str = Field(..., description="Target department ID (e.g. er, general_ward, icu, pediatrics)")
     severity: str = Field(..., pattern="^(critical|moderate|low)$", description="Acuity level: critical, moderate, low")
     predicted_stay_hours: float = Field(default=4.0, ge=0.5, le=336.0, description="Estimated stay duration in hours")
     notes: Optional[str] = Field(default=None, max_length=200, description="Optional clinical/admission notes")
+    age: Optional[int] = Field(default=None, ge=0, le=130, description="Patient age in years")
+    reason_for_visit: Optional[str] = Field(default=None, max_length=300, description="Chief complaint / clinical reason for visit")
 
 class PatientIntakeResponse(BaseModel):
     status: str

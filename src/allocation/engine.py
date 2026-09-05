@@ -10,7 +10,7 @@ from sqlalchemy import case, asc
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from src.api.db import SessionLocal
-from src.db.models import Department, Bed, Staff, DiagnosticFacility, Patient, EventLog
+from src.db.models import Department, Bed, Staff, DiagnosticFacility, Patient, EventLog, StaffNotification
 from src.allocation.rules import (
     SEVERITY_WEIGHTS,
     find_overflow_bed,
@@ -199,6 +199,16 @@ class HospitalAllocationEngine:
                     staff = self.find_least_loaded_staff(session, patient.department_needed)
                     if staff:
                         patient.assigned_staff_id = staff.staff_id
+                        age_info = f", Age: {patient.age}" if patient.age is not None else ""
+                        reason_info = f" | Reason: {patient.reason_for_visit}" if patient.reason_for_visit else ""
+                        notif = StaffNotification(
+                            staff_id=staff.staff_id,
+                            patient_id=patient.patient_id,
+                            message=f"New Patient Admitted: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {primary_bed.bed_id} in {dept_name}",
+                            is_read=False,
+                            created_at=now
+                        )
+                        session.add(notif)
 
                     event = EventLog(
                         event_type="bed_assigned",
@@ -233,6 +243,16 @@ class HospitalAllocationEngine:
                         staff = self.find_least_loaded_staff(session, overflow_bed.department_id)
                         if staff:
                             patient.assigned_staff_id = staff.staff_id
+                            age_info = f", Age: {patient.age}" if patient.age is not None else ""
+                            reason_info = f" | Reason: {patient.reason_for_visit}" if patient.reason_for_visit else ""
+                            notif = StaffNotification(
+                                staff_id=staff.staff_id,
+                                patient_id=patient.patient_id,
+                                message=f"Critical Overflow Patient: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {overflow_bed.bed_id} in {overflow_dept_name}",
+                                is_read=False,
+                                created_at=now
+                            )
+                            session.add(notif)
 
                         overflow_event = EventLog(
                             event_type="overflow_assigned",

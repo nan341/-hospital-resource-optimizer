@@ -44,13 +44,16 @@ def register_patient_intake(
     now = datetime.now()
 
     # 3. Create Patient record
+    reason = req.reason_for_visit or req.notes
     patient = Patient(
         patient_id=patient_id,
         arrival_time=now,
         department_needed=req.department_needed,
         severity=req.severity,
         predicted_stay_hours=req.predicted_stay_hours,
-        status="waiting"
+        status="waiting",
+        age=req.age,
+        reason_for_visit=reason
     )
     db.add(patient)
 

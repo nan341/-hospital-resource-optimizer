@@ -6,17 +6,19 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query, HTTPException, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from src.api.db import get_db, SessionLocal
 from src.db.models import Department, Bed, Staff, DiagnosticFacility, Patient, EventLog
 from src.db.init_db import init_database
+from src.api.auth import login_with_role, require_role, ADMIN_PASSWORD, STAFF_ACCESS_CODE
 from src.api.schemas import (
     DepartmentResponse,
     DiagnosticFacilityResponse,
@@ -25,13 +27,18 @@ from src.api.schemas import (
     SimulationStatusResponse,
     ForecastResponse
 )
-from src.api.routes import patients, beds, staff, events
+from src.api.routes import patients, beds, staff, events, patient_portal, staff_portal
 from src.data_pipeline.synthetic_generator import simulator
 from src.allocation.engine import allocation_engine
+from src.allocation.appointment_engine import appointment_scheduler
 from src.models.forecasting import forecaster
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Login Request Schema
+class LoginRequest(BaseModel):
+    password: str
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -63,7 +70,7 @@ manager = ConnectionManager()
 
 # Background Worker Loop
 async def background_allocation_and_broadcast_worker():
-    """Periodically runs allocation engine and broadcasts updated state to WebSocket clients."""
+    """Periodically runs allocation engine, outpatient queue advancement, and broadcasts state to WebSocket clients."""
     logger.info("Starting background allocation and broadcast worker...")
     while True:
         try:
@@ -71,10 +78,11 @@ async def background_allocation_and_broadcast_worker():
             if simulator.is_running:
                 await simulator.run_simulation_step(time_step_seconds=3.0)
 
-            # 2. Run allocation engine cycle
+            # 2. Run allocation engine & appointment queue advancement
             session = SessionLocal()
             try:
                 alloc_res = allocation_engine.run_allocation_cycle(session)
+                apt_res = appointment_scheduler.advance_queue(session)
 
                 # 3. Gather snapshot for live WebSocket broadcast
                 departments = session.query(Department).all()
@@ -123,6 +131,9 @@ async def background_allocation_and_broadcast_worker():
                         "status": s.status,
                         "shift_start": s.shift_start,
                         "shift_end": s.shift_end,
+                        "floor": s.floor,
+                        "room_number": s.room_number,
+                        "specialty": s.specialty,
                         "active_patients": active_count,
                         "is_busy": active_count > 0
                     })
@@ -134,7 +145,8 @@ async def background_allocation_and_broadcast_worker():
                         "severity": p.severity,
                         "predicted_stay_hours": p.predicted_stay_hours,
                         "arrival_time": p.arrival_time.isoformat(),
-                        "status": p.status
+                        "age": p.age,
+                        "reason_for_visit": p.reason_for_visit
                     }
                     for p in session.query(Patient).filter_by(status="waiting").order_by(Patient.arrival_time.asc()).all()
                 ]
@@ -142,28 +154,31 @@ async def background_allocation_and_broadcast_worker():
                 recent_events = [
                     {
                         "event_id": e.event_id,
-                        "timestamp": e.timestamp.isoformat(),
+                        "timestamp": e.timestamp.strftime("%H:%M:%S"),
                         "event_type": e.event_type,
                         "entity_id": e.entity_id,
                         "description": e.description,
                         "triggered_by": e.triggered_by
                     }
-                    for e in session.query(EventLog).order_by(EventLog.timestamp.desc(), EventLog.event_id.desc()).limit(30).all()
+                    for e in session.query(EventLog).order_by(EventLog.timestamp.desc()).limit(30).all()
                 ]
 
-                all_diagnostics = [
+                diagnostics_data = [
                     {
                         "facility_id": df.facility_id,
                         "type": df.type,
                         "department_id": df.department_id,
                         "status": df.status,
-                        "avg_procedure_minutes": df.avg_procedure_minutes,
                         "current_patient_id": df.current_patient_id
                     }
                     for df in session.query(DiagnosticFacility).all()
                 ]
 
-                forecasts = forecaster.predict_all_departments(session, horizon_hours=2)
+                forecasts_data = {}
+                for d in departments:
+                    if d.total_beds > 0:
+                        fc = forecaster.predict_next_hours(session, d.department_id, horizon_hours=2)
+                        forecasts_data[d.department_id] = fc
 
                 payload = {
                     "type": "state_update",
@@ -173,9 +188,10 @@ async def background_allocation_and_broadcast_worker():
                     "staff": all_staff,
                     "waiting_patients": waiting_patients,
                     "recent_events": recent_events,
-                    "diagnostics": all_diagnostics,
-                    "forecasts": forecasts,
+                    "diagnostics": diagnostics_data,
+                    "forecasts": forecasts_data,
                     "allocation_cycle": alloc_res,
+                    "appointment_cycle": apt_res,
                     "simulation": {
                         "is_running": simulator.is_running,
                         "speed_factor": simulator.speed_factor
@@ -205,12 +221,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Intelligent Hospital Resource Optimizer API",
-    description="Real-time demand forecasting, dynamic priority-queue bed allocation, and live hospital resource orchestration.",
-    version="1.0.0",
+    description="Real-time demand forecasting, dynamic priority-queue bed allocation, outpatient appointment scheduling, and role-separated hospital orchestration.",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# CORS configuration
+# CORS configuration - Allow all origins for LAN cross-device access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -219,14 +235,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register sub-routers
-app.include_router(patients.router)
-app.include_router(beds.router)
-app.include_router(staff.router)
-app.include_router(events.router)
+# ==========================================
+# PUBLIC AUTHENTICATION ENDPOINTS
+# ==========================================
+@app.post("/admin/login", tags=["auth"])
+def admin_login(body: LoginRequest):
+    """
+    Authenticates administrator password and returns a signed 8-hour admin JWT token.
+    """
+    token = login_with_role(body.password, ADMIN_PASSWORD, role="admin")
+    return {"token": token, "role": "admin"}
 
-# Department endpoint with aggregated statistics
-@app.get("/departments", response_model=List[DepartmentResponse], tags=["departments"])
+@app.post("/staff/login", tags=["auth"])
+def staff_login(body: LoginRequest):
+    """
+    Authenticates staff access code and returns a signed 8-hour staff JWT token.
+    """
+    token = login_with_role(body.password, STAFF_ACCESS_CODE, role="staff")
+    return {"token": token, "role": "staff"}
+
+# ==========================================
+# ROUTER REGISTRATION
+# ==========================================
+# Public Patient Portal (No Auth)
+app.include_router(patient_portal.router)
+
+# Staff Portal (Requires Staff Role Token)
+app.include_router(staff_portal.router)
+
+# Protected Admin Sub-routers (Require Admin Role Token)
+app.include_router(patients.router, dependencies=[Depends(require_role("admin"))])
+app.include_router(beds.router, dependencies=[Depends(require_role("admin"))])
+app.include_router(staff.router, dependencies=[Depends(require_role("admin"))])
+app.include_router(events.router, dependencies=[Depends(require_role("admin"))])
+
+# ==========================================
+# PROTECTED ADMIN DATA ENDPOINTS
+# ==========================================
+@app.get("/departments", response_model=List[DepartmentResponse], tags=["departments"], dependencies=[Depends(require_role("admin"))])
 def get_departments(db: Session = Depends(get_db)):
     departments = db.query(Department).all()
     results = []
@@ -257,8 +303,7 @@ def get_departments(db: Session = Depends(get_db)):
         ))
     return results
 
-# Diagnostic facilities endpoint
-@app.get("/diagnostics", response_model=List[DiagnosticFacilityResponse], tags=["diagnostics"])
+@app.get("/diagnostics", response_model=List[DiagnosticFacilityResponse], tags=["diagnostics"], dependencies=[Depends(require_role("admin"))])
 def get_diagnostics(
     department_id: Optional[str] = Query(None, description="Filter by department ID"),
     db: Session = Depends(get_db)
@@ -268,7 +313,7 @@ def get_diagnostics(
         query = query.filter(DiagnosticFacility.department_id == department_id)
     return query.order_by(DiagnosticFacility.facility_id).all()
 
-# Demand forecast endpoint
+# Demand forecast endpoint (Public)
 @app.get("/forecast/{department_id}", response_model=ForecastResponse, tags=["forecasting"])
 def get_department_forecast(
     department_id: str,
@@ -282,8 +327,10 @@ def get_department_forecast(
     forecast = forecaster.predict_next_hours(db, department_id, horizon_hours=horizon_hours)
     return ForecastResponse(**forecast)
 
-# Simulation control endpoints
-@app.post("/simulation/start", tags=["simulation"])
+# ==========================================
+# PROTECTED SIMULATION CONTROL ENDPOINTS
+# ==========================================
+@app.post("/simulation/start", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
 def start_simulation(body: Optional[SimulationControlRequest] = None):
     if body and body.speed_factor:
         simulator.speed_factor = body.speed_factor
@@ -294,19 +341,18 @@ def start_simulation(body: Optional[SimulationControlRequest] = None):
         "message": "Synthetic patient arrival simulation started."
     }
 
-@app.post("/simulation/stop", tags=["simulation"])
+@app.post("/simulation/stop", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
 def stop_simulation():
     simulator.stop()
     return {"status": "stopped", "message": "Simulation paused."}
 
-@app.post("/simulation/surge", tags=["simulation"])
+@app.post("/simulation/surge", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
 def trigger_surge(req: SurgeRequest, db: Session = Depends(get_db)):
     dept = db.query(Department).filter_by(department_id=req.department).first()
     if not dept:
         raise HTTPException(status_code=404, detail=f"Department '{req.department}' not found")
 
     created = simulator.execute_surge_now(req.department, req.patient_count)
-    # Immediately trigger allocation engine pass
     alloc_result = allocation_engine.run_allocation_cycle(db)
 
     return {
@@ -317,13 +363,13 @@ def trigger_surge(req: SurgeRequest, db: Session = Depends(get_db)):
         "message": f"Successfully triggered surge of {len(created)} critical patients in {dept.name}."
     }
 
-@app.post("/simulation/reset", tags=["simulation"])
+@app.post("/simulation/reset", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
 def reset_system():
     simulator.stop()
     init_database(drop_existing=True)
     return {"status": "reset_completed", "message": "Hospital system database reset to initial seeded state."}
 
-@app.get("/simulation/status", response_model=SimulationStatusResponse, tags=["simulation"])
+@app.get("/simulation/status", response_model=SimulationStatusResponse, tags=["simulation"], dependencies=[Depends(require_role("admin"))])
 def get_simulation_status(db: Session = Depends(get_db)):
     total_pts = db.query(Patient).count()
     queue_len = db.query(Patient).filter_by(status="waiting").count()
@@ -338,7 +384,9 @@ def get_simulation_status(db: Session = Depends(get_db)):
         active_admissions=active_adm
     )
 
-# Real-time WebSocket endpoint
+# ==========================================
+# REAL-TIME WEBSOCKET ENDPOINT (PUBLIC)
+# ==========================================
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
