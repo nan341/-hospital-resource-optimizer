@@ -180,7 +180,7 @@ def set_staff_status(
     db: Session = Depends(get_db)
 ):
     """
-    Sets staff duty status to on_duty, off_duty, or on_break.
+    Sets staff duty status to on_duty or off_duty.
     Reassigned staff cannot be manually updated (returns 409 Conflict).
     """
     staff = db.query(Staff).filter_by(staff_id=staff_id).first()
@@ -197,8 +197,8 @@ def set_staff_status(
             detail="Staff is currently assigned to emergency surge response and cannot change duty status manually."
         )
 
-    # Validate allowed statuses
-    allowed_statuses = ["on_duty", "off_duty", "on_break"]
+    # Validate allowed statuses (strictly on_duty and off_duty)
+    allowed_statuses = ["on_duty", "off_duty"]
     if body.status not in allowed_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -206,5 +206,32 @@ def set_staff_status(
         )
 
     staff.status = body.status
+    db.commit()
+    return {"status": "success", "staff_id": staff_id, "new_status": staff.status}
+
+@router.post("/{staff_id}/toggle-duty")
+def toggle_staff_duty(
+    staff_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Toggles staff duty between on_duty and off_duty.
+    Reassigned staff cannot be manually toggled (returns 409 Conflict).
+    If staff was in any non-on_duty status (e.g. off_duty or legacy on_break), switches to on_duty.
+    """
+    staff = db.query(Staff).filter_by(staff_id=staff_id).first()
+    if not staff:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Staff member '{staff_id}' not found."
+        )
+
+    if staff.status == "reassigned":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Staff is currently assigned to emergency surge response and cannot change duty status manually."
+        )
+
+    staff.status = "off_duty" if staff.status == "on_duty" else "on_duty"
     db.commit()
     return {"status": "success", "staff_id": staff_id, "new_status": staff.status}

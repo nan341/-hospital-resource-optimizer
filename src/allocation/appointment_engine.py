@@ -43,7 +43,7 @@ class AppointmentScheduler:
         if dept.total_beds > 0:
             raise ValueError(f"Department '{dept.name}' is an inpatient department. Appointments are only for outpatient clinics (OPD, ENT).")
 
-        # 2. Find on-duty doctors in this department (strictly exclude off_duty and on_break)
+        # 2. Find on-duty doctors in this department (strictly exclude off_duty)
         doctors = session.query(Staff).filter(
             Staff.department_id == department_id,
             Staff.status.in_(["on_duty", "reassigned"])
@@ -51,11 +51,10 @@ class AppointmentScheduler:
 
         if not doctors:
             total_dept_staff = session.query(Staff).filter(Staff.department_id == department_id).count()
-            on_break_staff = session.query(Staff).filter(Staff.department_id == department_id, Staff.status == "on_break").count()
             off_duty_staff = session.query(Staff).filter(Staff.department_id == department_id, Staff.status == "off_duty").count()
             raise ValueError(
                 f"No available doctors currently on duty in department '{dept.name}' (ID: '{department_id}'). "
-                f"Total staff: {total_dept_staff} (on duty: 0, on break: {on_break_staff}, off duty: {off_duty_staff})."
+                f"Total staff: {total_dept_staff} (on duty: 0, off duty: {off_duty_staff})."
             )
 
         # Calculate active workload for each on-duty doctor (count of scheduled + in_consultation)

@@ -139,22 +139,27 @@ def test_appointment_booking_and_doctor_dashboard():
     assert res_read.status_code == 200
     assert res_read.json()["is_read"] is True
 
-    # 6. Set staff status (on_break, off_duty, on_duty)
+    # 6. Set staff status (off_duty, on_duty, toggle-duty, reject on_break)
+    res_status_off = client.post(f"/staff-portal/{assigned_doc_id}/set-status", json={"status": "off_duty"}, headers=staff_headers)
+    assert res_status_off.status_code == 200
+    assert res_status_off.json()["new_status"] == "off_duty"
+
+    # on_break must be rejected with 400
     res_status_break = client.post(f"/staff-portal/{assigned_doc_id}/set-status", json={"status": "on_break"}, headers=staff_headers)
-    assert res_status_break.status_code == 200
-    assert res_status_break.json()["new_status"] == "on_break"
+    assert res_status_break.status_code == 400
 
     res_status_invalid = client.post(f"/staff-portal/{assigned_doc_id}/set-status", json={"status": "vacation"}, headers=staff_headers)
     assert res_status_invalid.status_code == 400
 
-    res_status_duty = client.post(f"/staff-portal/{assigned_doc_id}/set-status", json={"status": "on_duty"}, headers=staff_headers)
-    assert res_status_duty.status_code == 200
-    assert res_status_duty.json()["new_status"] == "on_duty"
+    # Toggle duty back to on_duty
+    res_toggle = client.post(f"/staff-portal/{assigned_doc_id}/toggle-duty", headers=staff_headers)
+    assert res_toggle.status_code == 200
+    assert res_toggle.json()["new_status"] == "on_duty"
 
 
-def test_department_level_queue_and_on_break_filtering():
+def test_department_level_queue_and_off_duty_filtering():
     # 1. Book 4 consecutive OPD appointments
-    # In OPD there are 3 doctors: Dr. Rajesh Kumar (staff_023), Dr. Ananya Sen (staff_024), Dr. Vikram Malhotra (staff_025)
+    # In OPD there are 3 doctors: Dr. Rajesh Kumar (staff-opd-1), Dr. Ananya Sen (staff-opd-2), Dr. Vikram Malhotra (staff-opd-3)
     # Department queue position should increment: 0, 1, 2, 3
     results = []
     for i in range(4):
@@ -176,14 +181,14 @@ def test_department_level_queue_and_on_break_filtering():
     assert res_lookup.status_code == 200
     assert res_lookup.json()["department_queue_position"] == 3
 
-    # 2. Test on_break filtering
+    # 2. Test off_duty filtering
     # Log in staff
     res_staff = client.post("/staff/login", json={"password": "staff123"})
     staff_headers = {"Authorization": f"Bearer {res_staff.json()['token']}"}
 
-    # Set staff-opd-1 and staff-opd-2 to on_break
-    client.post("/staff-portal/staff-opd-1/set-status", json={"status": "on_break"}, headers=staff_headers)
-    client.post("/staff-portal/staff-opd-2/set-status", json={"status": "on_break"}, headers=staff_headers)
+    # Set staff-opd-1 and staff-opd-2 to off_duty
+    client.post("/staff-portal/staff-opd-1/set-status", json={"status": "off_duty"}, headers=staff_headers)
+    client.post("/staff-portal/staff-opd-2/set-status", json={"status": "off_duty"}, headers=staff_headers)
 
     # Now booking in OPD MUST go to staff-opd-3 (the only active doctor)
     res_single = client.post("/patient-portal/book-appointment", json={
