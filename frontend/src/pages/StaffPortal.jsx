@@ -134,6 +134,9 @@ export default function StaffPortal() {
           status: res.data.new_status
         }));
       }
+      setRoster((prev) =>
+        prev.map((s) => (s.staff_id === selectedStaffId ? { ...s, status: res.data.new_status } : s))
+      );
     } catch (err) {
       alert(err.response?.data?.detail || 'Failed to update duty status.');
     } finally {

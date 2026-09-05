@@ -50,7 +50,13 @@ class AppointmentScheduler:
         ).all()
 
         if not doctors:
-            raise ValueError(f"No available doctors currently on duty in department '{dept.name}'.")
+            total_dept_staff = session.query(Staff).filter(Staff.department_id == department_id).count()
+            on_break_staff = session.query(Staff).filter(Staff.department_id == department_id, Staff.status == "on_break").count()
+            off_duty_staff = session.query(Staff).filter(Staff.department_id == department_id, Staff.status == "off_duty").count()
+            raise ValueError(
+                f"No available doctors currently on duty in department '{dept.name}' (ID: '{department_id}'). "
+                f"Total staff: {total_dept_staff} (on duty: 0, on break: {on_break_staff}, off duty: {off_duty_staff})."
+            )
 
         # Calculate active workload for each on-duty doctor (count of scheduled + in_consultation)
         doctor_loads = []

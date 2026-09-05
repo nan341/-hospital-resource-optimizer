@@ -7,6 +7,7 @@ from src.db.init_db import init_database
 def setup_db():
     init_database(drop_existing=True)
     yield
+    init_database(drop_existing=True)
 
 client = TestClient(app)
 
