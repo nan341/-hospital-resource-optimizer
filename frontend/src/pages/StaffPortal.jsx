@@ -122,12 +122,12 @@ export default function StaffPortal() {
     }
   };
 
-  // 4. Handle Toggle Duty
-  const handleToggleDuty = async () => {
-    if (!selectedStaffId) return;
+  // 4. Handle Set Status (On Duty / On Break / Off Duty)
+  const handleSetStatus = async (newStatus) => {
+    if (!selectedStaffId || dutyLoading) return;
     setDutyLoading(true);
     try {
-      const res = await toggleStaffDuty(selectedStaffId, token);
+      const res = await setStaffStatus(selectedStaffId, newStatus, token);
       if (dashboardData) {
         setDashboardData((prev) => ({
           ...prev,
@@ -135,7 +135,7 @@ export default function StaffPortal() {
         }));
       }
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to toggle duty status.');
+      alert(err.response?.data?.detail || 'Failed to update duty status.');
     } finally {
       setDutyLoading(false);
     }
@@ -308,14 +308,16 @@ export default function StaffPortal() {
               </div>
             </div>
 
-            {/* Duty Status & Toggle Button */}
-            <div className="flex items-center space-x-3">
-              <div className="text-right">
+            {/* Duty Status & 3-Way Segmented Control */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="sm:text-right">
                 <span className="block text-[10px] uppercase font-semibold text-slate-400">Current Status</span>
                 <span
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${
                     dashboardData.status === 'reassigned'
                       ? 'bg-amber-950 text-amber-300 border-amber-500 animate-pulse'
+                      : dashboardData.status === 'on_break'
+                      ? 'bg-amber-950/80 text-amber-300 border-amber-500/80'
                       : dashboardData.status === 'on_duty'
                       ? 'bg-emerald-950 text-emerald-300 border-emerald-600'
                       : 'bg-slate-950 text-slate-400 border-slate-800'
@@ -325,6 +327,8 @@ export default function StaffPortal() {
                     className={`w-2 h-2 rounded-full ${
                       dashboardData.status === 'reassigned'
                         ? 'bg-amber-400 animate-ping'
+                        : dashboardData.status === 'on_break'
+                        ? 'bg-amber-400'
                         : dashboardData.status === 'on_duty'
                         ? 'bg-emerald-400'
                         : 'bg-slate-500'
@@ -332,20 +336,58 @@ export default function StaffPortal() {
                   />
                   {dashboardData.status === 'reassigned'
                     ? 'SURGE REASSIGNED'
+                    : dashboardData.status === 'on_break'
+                    ? 'ON BREAK'
                     : dashboardData.status === 'on_duty'
                     ? 'ON DUTY'
                     : 'OFF DUTY'}
                 </span>
               </div>
 
-              <button
-                onClick={handleToggleDuty}
-                disabled={dutyLoading || dashboardData.status === 'reassigned'}
-                className="flex items-center space-x-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Power className="w-3.5 h-3.5" />
-                <span>{dashboardData.status === 'on_duty' ? 'Go Off Duty' : 'Go On Duty'}</span>
-              </button>
+              {/* 3-Way Segmented Control */}
+              <div className="inline-flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => handleSetStatus('on_duty')}
+                  disabled={dutyLoading || dashboardData.status === 'reassigned'}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                    dashboardData.status === 'on_duty'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 disabled:opacity-40'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />
+                  <span>On Duty</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSetStatus('on_break')}
+                  disabled={dutyLoading || dashboardData.status === 'reassigned'}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                    dashboardData.status === 'on_break'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 disabled:opacity-40'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-300" />
+                  <span>On Break</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSetStatus('off_duty')}
+                  disabled={dutyLoading || dashboardData.status === 'reassigned'}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                    dashboardData.status === 'off_duty'
+                      ? 'bg-slate-700 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 disabled:opacity-40'
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                  <span>Off Duty</span>
+                </button>
+              </div>
             </div>
           </div>
         </section>

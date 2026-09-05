@@ -108,6 +108,7 @@ class Appointment(Base):
     scheduled_time = Column(DateTime, default=datetime.now)
     estimated_wait_minutes = Column(Integer, default=0)
     queue_position = Column(Integer, nullable=True)
+    department_queue_position = Column(Integer, nullable=True)
     status = Column(String(50), default="scheduled")  # scheduled, in_consultation, completed, no_show, cancelled
     patient_id = Column(String(50), ForeignKey("patients.patient_id"), nullable=True)
 

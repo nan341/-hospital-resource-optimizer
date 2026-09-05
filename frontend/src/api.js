@@ -66,7 +66,10 @@ export const getStaffNotifications = (staffId, unreadOnly = true, token) => api.
 export const markNotificationRead = (staffId, notificationId, token) => api.post(`/staff-portal/${staffId}/notifications/${notificationId}/mark-read`, {}, {
   headers: token ? { Authorization: `Bearer ${token}` } : undefined
 });
-export const toggleStaffDuty = (staffId, token) => api.post(`/staff-portal/${staffId}/toggle-duty`, {}, {
+export const setStaffStatus = (staffId, status, token) => api.post(`/staff-portal/${staffId}/set-status`, { status }, {
+  headers: token ? { Authorization: `Bearer ${token}` } : undefined
+});
+export const toggleStaffDuty = (staffId, token) => api.post(`/staff-portal/${staffId}/set-status`, { status: 'on_duty' }, {
   headers: token ? { Authorization: `Bearer ${token}` } : undefined
 });
 

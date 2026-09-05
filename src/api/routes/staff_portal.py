@@ -170,14 +170,18 @@ def mark_notification_read(
     db.commit()
     return {"status": "success", "notification_id": notification_id, "is_read": True}
 
-@router.post("/{staff_id}/toggle-duty")
-def toggle_staff_duty(
+class SetStatusRequest(BaseModel):
+    status: str
+
+@router.post("/{staff_id}/set-status")
+def set_staff_status(
     staff_id: str,
+    body: SetStatusRequest,
     db: Session = Depends(get_db)
 ):
     """
-    Toggles staff duty between on_duty and off_duty.
-    Reassigned staff cannot be manually toggled (returns 409 Conflict).
+    Sets staff duty status to on_duty, off_duty, or on_break.
+    Reassigned staff cannot be manually updated (returns 409 Conflict).
     """
     staff = db.query(Staff).filter_by(staff_id=staff_id).first()
     if not staff:
@@ -186,12 +190,21 @@ def toggle_staff_duty(
             detail=f"Staff member '{staff_id}' not found."
         )
 
+    # Reject if staff is currently reassigned by the engine
     if staff.status == "reassigned":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Staff is currently assigned to emergency surge response and cannot change duty status manually."
         )
 
-    staff.status = "off_duty" if staff.status == "on_duty" else "on_duty"
+    # Validate allowed statuses
+    allowed_statuses = ["on_duty", "off_duty", "on_break"]
+    if body.status not in allowed_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status '{body.status}'. Allowed values are: {', '.join(allowed_statuses)}."
+        )
+
+    staff.status = body.status
     db.commit()
     return {"status": "success", "staff_id": staff_id, "new_status": staff.status}

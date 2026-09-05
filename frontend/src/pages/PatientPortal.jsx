@@ -277,7 +277,7 @@ export default function PatientPortal() {
                     <div>
                       <span className="block text-slate-500 text-[11px]">Queue Position</span>
                       <span className="font-bold text-indigo-700 text-sm">
-                        You are #{bookingResult.queue_position} in line
+                        You are #{bookingResult.department_queue_position !== undefined ? bookingResult.department_queue_position + 1 : (bookingResult.queue_position || 1)} in line
                       </span>
                     </div>
                     <div>
@@ -449,7 +449,7 @@ export default function PatientPortal() {
                         ? 'Now In Consultation'
                         : lookupResult.status === 'completed'
                         ? 'Completed'
-                        : `Waiting (#${lookupResult.queue_position})`}
+                        : `Waiting (#${lookupResult.department_queue_position !== undefined ? lookupResult.department_queue_position + 1 : lookupResult.queue_position})`}
                     </span>
                   </div>
 
@@ -465,7 +465,7 @@ export default function PatientPortal() {
                     </p>
                     {lookupResult.status === 'scheduled' && (
                       <div className="pt-2 border-t border-slate-200 text-xs font-medium text-indigo-700">
-                        You are currently #{lookupResult.queue_position} in line (~{lookupResult.estimated_wait_minutes} mins estimated wait).
+                        You are currently #{lookupResult.department_queue_position !== undefined ? lookupResult.department_queue_position + 1 : lookupResult.queue_position} in line (~{lookupResult.estimated_wait_minutes} mins estimated wait).
                       </div>
                     )}
                     {lookupResult.status === 'in_consultation' && (
