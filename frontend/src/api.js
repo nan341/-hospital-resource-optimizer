@@ -1,7 +1,14 @@
 import axios from 'axios';
 
-export const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000';
-export const WS_BASE = import.meta.env.VITE_WS_BASE || 'ws://127.0.0.1:8000';
+// Dynamically detect server host (works on localhost AND across LAN laptops automatically)
+const defaultHost = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
+export const API_BASE = import.meta.env.VITE_API_BASE && !import.meta.env.VITE_API_BASE.includes('127.0.0.1')
+  ? import.meta.env.VITE_API_BASE
+  : `http://${defaultHost}:8000`;
+
+export const WS_BASE = import.meta.env.VITE_WS_BASE && !import.meta.env.VITE_WS_BASE.includes('127.0.0.1')
+  ? import.meta.env.VITE_WS_BASE
+  : `ws://${defaultHost}:8000`;
 
 export const WS_LIVE_URL = `${WS_BASE}/ws/live`;
 
