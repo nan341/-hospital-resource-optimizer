@@ -22,8 +22,12 @@ export default function AdminLogin() {
         navigate('/admin');
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'Invalid administrator password. Please check your password.';
-      setError(detail);
+      if (!err.response) {
+        setError('Cannot connect to backend server. Please make sure Uvicorn is running on port 8000.');
+      } else {
+        const detail = err.response?.data?.detail || 'Invalid administrator password. Please check your password.';
+        setError(detail);
+      }
     } finally {
       setLoading(false);
     }

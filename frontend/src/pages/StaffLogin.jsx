@@ -22,8 +22,12 @@ export default function StaffLogin() {
         navigate('/staff');
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'Invalid staff access code. Please check your access code.';
-      setError(detail);
+      if (!err.response) {
+        setError('Cannot connect to backend server. Please make sure Uvicorn is running on port 8000.');
+      } else {
+        const detail = err.response?.data?.detail || 'Invalid staff access code. Please check your access code.';
+        setError(detail);
+      }
     } finally {
       setLoading(false);
     }
