@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Lock, ArrowLeft, AlertTriangle, KeyRound } from 'lucide-react';
+import { Shield, Lock, ArrowLeft, AlertTriangle, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { adminLogin } from '../api';
 
 export default function AdminLogin() {
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
@@ -15,13 +16,13 @@ export default function AdminLogin() {
     setError(null);
 
     try {
-      const res = await adminLogin(password);
+      const res = await adminLogin(password.trim());
       if (res.data && res.data.token) {
         sessionStorage.setItem('admin_token', res.data.token);
         navigate('/admin');
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'Invalid administrator password. Please try again.';
+      const detail = err.response?.data?.detail || 'Invalid administrator password. Please check your password.';
       setError(detail);
     } finally {
       setLoading(false);
@@ -67,17 +68,33 @@ export default function AdminLogin() {
             </label>
             <div className="relative">
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 placeholder="Enter admin password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 pr-10 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-500 transition"
               />
               <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3.5 top-3.5 text-slate-500 hover:text-slate-300 transition"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Default password: <span className="font-mono text-cyan-400">changeme</span>
+            <p className="text-[11px] text-slate-500 mt-1.5 flex items-center gap-1.5">
+              <span>Default password:</span>
+              <button
+                type="button"
+                onClick={() => setPassword('changeme')}
+                className="font-mono text-cyan-400 hover:text-cyan-300 underline font-semibold transition"
+                title="Click to auto-fill"
+              >
+                changeme
+              </button>
             </p>
           </div>
 

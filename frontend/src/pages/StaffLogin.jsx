@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserCheck, Key, ArrowLeft, AlertTriangle, LogIn } from 'lucide-react';
+import { UserCheck, Key, ArrowLeft, AlertTriangle, LogIn, Eye, EyeOff } from 'lucide-react';
 import { staffLogin } from '../api';
 
 export default function StaffLogin() {
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
@@ -15,13 +16,13 @@ export default function StaffLogin() {
     setError(null);
 
     try {
-      const res = await staffLogin(password);
+      const res = await staffLogin(password.trim());
       if (res.data && res.data.token) {
         sessionStorage.setItem('staff_token', res.data.token);
         navigate('/staff');
       }
     } catch (err) {
-      const detail = err.response?.data?.detail || 'Invalid staff access code. Please try again.';
+      const detail = err.response?.data?.detail || 'Invalid staff access code. Please check your access code.';
       setError(detail);
     } finally {
       setLoading(false);
@@ -67,17 +68,33 @@ export default function StaffLogin() {
             </label>
             <div className="relative">
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 placeholder="Enter staff access code"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 pl-10 pr-10 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition"
               />
               <Key className="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5" />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3.5 top-3.5 text-slate-500 hover:text-slate-300 transition"
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Default access code: <span className="font-mono text-indigo-400">staff123</span>
+            <p className="text-[11px] text-slate-500 mt-1.5 flex items-center gap-1.5">
+              <span>Default access code:</span>
+              <button
+                type="button"
+                onClick={() => setPassword('staff123')}
+                className="font-mono text-indigo-400 hover:text-indigo-300 underline font-semibold transition"
+                title="Click to auto-fill"
+              >
+                staff123
+              </button>
             </p>
           </div>
 
