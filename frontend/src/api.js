@@ -1,16 +1,43 @@
 import axios from 'axios';
 
-// Dynamically detect server host (works on localhost AND across LAN laptops automatically)
-const defaultHost = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
-export const API_BASE = import.meta.env.VITE_API_BASE && !import.meta.env.VITE_API_BASE.includes('127.0.0.1')
-  ? import.meta.env.VITE_API_BASE
-  : `http://${defaultHost}:8000`;
+// Base URL configuration:
+// - In production (Render single-origin container), default to relative paths ("")
+// - In standalone local dev (e.g. Vite on :5173 without backend proxy), fallback to :8000
+const isBrowser = typeof window !== 'undefined';
+const customApiBase = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE;
 
-export const WS_BASE = import.meta.env.VITE_WS_BASE && !import.meta.env.VITE_WS_BASE.includes('127.0.0.1')
-  ? import.meta.env.VITE_WS_BASE
-  : `ws://${defaultHost}:8000`;
+export const API_BASE = customApiBase !== undefined
+  ? customApiBase
+  : (isBrowser && window.location.port === '5173'
+      ? `http://${window.location.hostname}:8000`
+      : '');
 
-export const WS_LIVE_URL = `${WS_BASE}/ws/live`;
+// Derive WebSocket URL:
+// - Uses wss:// on HTTPS, ws:// on HTTP
+// - Connects to same host/port on production, or port 8000 in standalone Vite dev (:5173)
+const getWsUrl = () => {
+  if (import.meta.env.VITE_WS_BASE) {
+    return `${import.meta.env.VITE_WS_BASE}/ws/live`;
+  }
+  if (!isBrowser) return 'ws://127.0.0.1:8000/ws/live';
+
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsHost = window.location.port === '5173'
+    ? `${window.location.hostname}:8000`
+    : window.location.host;
+
+  return `${wsProtocol}//${wsHost}/ws/live`;
+};
+
+export const WS_BASE = import.meta.env.VITE_WS_BASE || (
+  isBrowser
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${
+        window.location.port === '5173' ? `${window.location.hostname}:8000` : window.location.host
+      }`
+    : 'ws://127.0.0.1:8000'
+);
+
+export const WS_LIVE_URL = getWsUrl();
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -145,9 +172,12 @@ export const stopSimulation = (token) => api.post('/simulation/stop', {}, {
 export const triggerSurge = (department = 'er', patientCount = 8, token) => api.post('/simulation/surge', { department, patient_count: patientCount }, {
   headers: token ? { Authorization: `Bearer ${token}` } : undefined
 });
-export const resetSystem = (token) => api.post('/simulation/reset', {}, {
-  headers: token ? { Authorization: `Bearer ${token}` } : undefined
-});
+export const resetSystem = (token, adminToken) => {
+  const headers = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (adminToken) headers['X-Admin-Token'] = adminToken;
+  return api.post('/simulation/reset', {}, { headers });
+};
 export const getSimulationStatus = (token) => api.get('/simulation/status', {
   headers: token ? { Authorization: `Bearer ${token}` } : undefined
 });

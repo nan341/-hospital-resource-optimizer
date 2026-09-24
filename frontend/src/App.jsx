@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Info } from 'lucide-react';
 
 import LandingPage from './pages/LandingPage';
 import AdminLogin from './pages/AdminLogin';
@@ -13,6 +14,10 @@ import ErrorBoundary from './components/ErrorBoundary';
 export default function App() {
   return (
     <ErrorBoundary>
+      <div className="bg-cyan-950/90 border-b border-cyan-800/80 px-4 py-1.5 text-center text-xs text-cyan-200 font-medium flex items-center justify-center space-x-2 shadow-inner">
+        <Info className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+        <span>Demo – all data is simulated. No real patient information.</span>
+      </div>
       <BrowserRouter>
         <Routes>
           {/* Public Landing Gateway */}

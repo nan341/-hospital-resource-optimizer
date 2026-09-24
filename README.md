@@ -114,13 +114,66 @@ To run the backend server on one laptop and connect multiple client devices (e.g
 
 ---
 
+---
+
 ## 🧪 Automated Testing
 
-Run the full pytest suite (24 tests covering allocation, forecasting, auth, patient portal, rescheduling, staff portal, and admin case logs):
+Run the full pytest suite (27 tests covering allocation, forecasting, auth, patient portal, rescheduling, staff portal, admin case logs, and demo protection):
 
 ```powershell
 .\venv\Scripts\pytest tests/ -v
 ```
+
+---
+
+## ☁️ Public Demo & Cloud Deployment (Render Free Tier)
+
+The application is fully containerized as a single-origin Docker service where FastAPI serves both the REST/WebSocket API and the built React frontend (`frontend/dist`) as static files.
+
+> **Live Demo**: `https://<your-app-name>.onrender.com` *(Replace with your deployed Render URL)*
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `ADMIN_TOKEN` | Yes (in Prod) | `changeme` | Token required in `X-Admin-Token` header to reset the database |
+| `DATABASE_URL` | No | `sqlite:///data/hospital.db` | SQLAlchemy SQLite database connection string |
+| `ADMIN_PASSWORD` | No | `changeme` | Administrator portal login password |
+| `STAFF_ACCESS_CODE` | No | `staff123` | Clinical staff workspace access code |
+| `JWT_SECRET` | No | `default-jwt-secret...` | Secret key used to sign and verify role-based JWTs |
+| `PORT` | No | `8000` | Port on which the container server listens |
+| `CORS_ORIGINS` | No | `*` | Allowed CORS origins (comma-separated or `*`) |
+
+---
+
+### Step-by-Step Render Deployment
+
+1. **Push Changes to GitHub**:
+   Ensure your repository has `Dockerfile`, `.dockerignore`, `render.yaml`, and the latest code.
+2. **Log in to [Render](https://render.com/)**:
+   - Click **New +** $\rightarrow$ **Blueprint** (or **Web Service**).
+   - Connect your GitHub repository: `https://github.com/nan341/-hospital-resource-optimizer`.
+3. **Configure & Deploy**:
+   - If using **Blueprint**, Render automatically reads `render.yaml` and provisions the Docker Web Service with generated secrets.
+   - If using **Web Service** manually:
+     - Runtime: **Docker**
+     - Health Check Path: `/health`
+     - Plan: **Free**
+     - Add environment variable `ADMIN_TOKEN` (set to your chosen secure token).
+   - Click **Create Web Service** / **Apply**.
+4. **Access and Verify**:
+   - Open your Render service URL (`https://<app-name>.onrender.com`).
+   - The landing page will load, WebSocket will connect over secure `wss://`, and all portals will be live.
+
+---
+
+### 🛡️ Public Demo Safeguards & Free-Tier Caveats
+
+* **Demo Protection**: The `POST /simulation/reset` endpoint and the UI "Reset DB" button require the `X-Admin-Token` header matching `ADMIN_TOKEN`. Unauthorized visitors cannot wipe the database.
+* **Rate-Limiting**: Simulation triggers (`/simulation/start` and `/simulation/surge`) are rate-limited per IP with in-memory cooldowns.
+* **Idle Auto-Reset**: If the application remains idle without active WebSocket clients or activity for 10 minutes, the database automatically resets to the fresh initial baseline.
+* **Cold Starts**: Render's free tier spins down inactive containers after 15 minutes of inactivity. Initial page loads after spin-down may take ~30–50 seconds to wake the service.
+* **Ephemeral SQLite Storage**: Container restarts reset local SQLite storage to the seeded state by design, self-healing automatically on startup.
 
 ---
 

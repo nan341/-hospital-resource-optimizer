@@ -176,3 +176,26 @@ def test_er_saturation_doctor_and_nurse_busy_and_event_timestamps():
         assert dt is not None
         assert dt.year >= 2024
 
+def test_health_check():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+def test_simulation_reset_protection():
+    headers = get_admin_headers()
+
+    # 1. Reset without X-Admin-Token should be rejected (403)
+    res_no_token = client.post("/simulation/reset", headers=headers)
+    assert res_no_token.status_code == 403
+
+    # 2. Reset with wrong token should be rejected (403)
+    bad_headers = {**headers, "X-Admin-Token": "wrong-token-123"}
+    res_bad_token = client.post("/simulation/reset", headers=bad_headers)
+    assert res_bad_token.status_code == 403
+
+    # 3. Reset with valid X-Admin-Token should succeed (200)
+    valid_headers = {**headers, "X-Admin-Token": "changeme"}
+    res_valid = client.post("/simulation/reset", headers=valid_headers)
+    assert res_valid.status_code == 200
+    assert res_valid.json()["status"] == "reset_completed"
+

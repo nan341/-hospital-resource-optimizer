@@ -40,18 +40,34 @@ export default function SurgeAlert({ criticalAlert, isSimRunning, onResetSuccess
     }
   };
 
-  const handleReset = async () => {
-    if (!window.confirm('Reset hospital database to fresh seed state?')) return;
+  const [adminTokenInput, setAdminTokenInput] = useState(() => sessionStorage.getItem('demo_admin_token') || '');
+  const [showResetModal, setShowResetModal] = useState(false);
+
+  const handleReset = async (overrideToken) => {
+    const tokenToUse = overrideToken !== undefined ? overrideToken : adminTokenInput;
+    if (!tokenToUse) {
+      setShowResetModal(true);
+      return;
+    }
+
     try {
       setLoading(true);
-      await resetSystem();
+      const token = sessionStorage.getItem('admin_token');
+      await resetSystem(token, tokenToUse);
+      sessionStorage.setItem('demo_admin_token', tokenToUse);
+      setShowResetModal(false);
       setFeedback('Hospital database reset to initial seeded state.');
       if (onResetSuccess) onResetSuccess();
     } catch (err) {
-      setFeedback('Error resetting system: ' + err.message);
+      if (err.response?.status === 403 || err.response?.status === 401) {
+        setFeedback('Invalid Demo Admin Token. Reset rejected.');
+        setShowResetModal(true);
+      } else {
+        setFeedback('Error resetting system: ' + (err.response?.data?.detail || err.message));
+      }
     } finally {
       setLoading(false);
-      setTimeout(() => setFeedback(null), 3500);
+      setTimeout(() => setFeedback(null), 4000);
     }
   };
 
@@ -154,16 +170,58 @@ export default function SurgeAlert({ criticalAlert, isSimRunning, onResetSuccess
 
           {/* Reset System Button */}
           <button
-            onClick={handleReset}
+            onClick={() => handleReset()}
             disabled={loading}
             className="flex items-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-medium transition border border-slate-700"
-            title="Reset database to initial seeded capacity"
+            title="Reset database to initial seeded baseline (Requires Demo Admin Token)"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Reset DB</span>
           </button>
         </div>
       </div>
+
+      {/* Demo Admin Reset Token Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center space-x-3 text-amber-400">
+              <ShieldAlert className="w-6 h-6" />
+              <h3 className="text-lg font-bold text-slate-100">Demo Admin Authorization Required</h3>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              To protect the shared public demo, resetting the database requires the <span className="font-mono text-cyan-300">ADMIN_TOKEN</span> configured on the server.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                Enter Admin Token:
+              </label>
+              <input
+                type="password"
+                value={adminTokenInput}
+                onChange={(e) => setAdminTokenInput(e.target.value)}
+                placeholder="Enter ADMIN_TOKEN (e.g. changeme)"
+                className="w-full bg-slate-950 border border-slate-700 focus:border-cyan-500 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none font-mono"
+              />
+            </div>
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                onClick={() => setShowResetModal(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleReset(adminTokenInput)}
+                disabled={loading || !adminTokenInput.trim()}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition shadow-md shadow-rose-950/40"
+              >
+                {loading ? 'Resetting...' : 'Confirm Reset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transient Action Feedback */}
       {feedback && (

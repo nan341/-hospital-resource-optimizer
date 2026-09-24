@@ -5,7 +5,7 @@ from datetime import datetime
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from src.api.db import engine, SessionLocal, Base
+from src.api.db import engine, SessionLocal, Base, DATABASE_URL
 from src.db.models import (
     Department,
     Bed,
@@ -20,9 +20,15 @@ from src.db.models import (
 
 def init_database(drop_existing: bool = False):
     """Creates tables and seeds initial hospital departments, beds, staff, and diagnostic facilities."""
-    # Ensure data directory exists
-    db_dir = os.path.dirname(os.path.abspath("data/hospital.db"))
-    os.makedirs(db_dir, exist_ok=True)
+    # Ensure data directory exists if using SQLite file
+    if DATABASE_URL.startswith("sqlite:///"):
+        sqlite_file = DATABASE_URL.replace("sqlite:///", "")
+        if sqlite_file and sqlite_file != ":memory:":
+            db_dir = os.path.dirname(os.path.abspath(sqlite_file))
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
+    else:
+        os.makedirs(os.path.abspath("data"), exist_ok=True)
 
     if drop_existing:
         Base.metadata.drop_all(bind=engine)

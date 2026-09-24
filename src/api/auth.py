@@ -2,7 +2,7 @@ import os
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, status, Request
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -53,14 +53,21 @@ def decode_token(token: str) -> dict:
             detail="Invalid authentication token."
         )
 
+class SPABrowserNavigation(Exception):
+    """Raised when a browser navigates to an SPA route that collides with an API route."""
+    pass
+
 def require_role(required_role: str) -> Callable:
     """
     Returns a FastAPI dependency that enforces a strict role requirement.
     Checks Authorization: Bearer <token>.
     Raises 401 for missing/invalid token, 403 for insufficient role permissions.
     """
-    def dependency(authorization: Optional[str] = Header(None)) -> dict:
+    def dependency(request: Request, authorization: Optional[str] = Header(None)) -> dict:
         if not authorization:
+            accept = request.headers.get("accept", "")
+            if request.method == "GET" and "text/html" in accept and "application/json" not in accept:
+                raise SPABrowserNavigation()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Missing Authorization header."

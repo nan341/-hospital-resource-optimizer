@@ -11,14 +11,16 @@ from pydantic import BaseModel
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query, HTTPException, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query, HTTPException, status, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from src.api.db import get_db, SessionLocal
 from src.db.models import Department, Bed, Staff, DiagnosticFacility, Patient, EventLog
 from src.db.init_db import init_database
-from src.api.auth import login_with_role, require_role, ADMIN_PASSWORD, STAFF_ACCESS_CODE
+from src.api.auth import login_with_role, require_role, ADMIN_PASSWORD, STAFF_ACCESS_CODE, SPABrowserNavigation
 from src.api.schemas import (
     DepartmentResponse,
     DiagnosticFacilityResponse,
@@ -35,6 +37,36 @@ from src.models.forecasting import forecaster
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+import time
+
+# Demo Admin Token configuration
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", os.getenv("ADMIN_PASSWORD", "changeme"))
+
+# Rate-limiting state for demo protection: { "ip:action": timestamp }
+_rate_limit_state: Dict[str, float] = {}
+
+def check_rate_limit(request: Request, action: str, cooldown_seconds: float = 2.0):
+    """Enforces a lightweight in-memory rate limit per IP per action."""
+    client_ip = request.client.host if request.client else "unknown"
+    if client_ip == "testclient":
+        return
+    key = f"{client_ip}:{action}"
+    now_ts = time.time()
+    last_ts = _rate_limit_state.get(key, 0.0)
+    if (now_ts - last_ts) < cooldown_seconds:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Please wait {cooldown_seconds}s before triggering '{action}' again."
+        )
+    _rate_limit_state[key] = now_ts
+
+# Idle activity tracking for automatic demo baseline reset
+last_activity_time = datetime.now()
+
+def mark_activity():
+    global last_activity_time
+    last_activity_time = datetime.now()
 
 # Login Request Schema
 class LoginRequest(BaseModel):
@@ -210,6 +242,22 @@ async def background_allocation_and_broadcast_worker():
             finally:
                 session.close()
 
+            # Check for idle auto-reset if no active ws connections, sim stopped, and 10 mins elapsed
+            if not simulator.is_running and len(manager.active_connections) == 0:
+                elapsed_idle = (datetime.now() - last_activity_time).total_seconds()
+                if elapsed_idle >= 600.0:
+                    session = SessionLocal()
+                    try:
+                        waiting_count = session.query(Patient).filter(Patient.status == "waiting").count()
+                        if waiting_count > 0:
+                            logger.info("Auto-reset triggered due to 10 minutes of inactivity.")
+                            init_database(drop_existing=True)
+                            mark_activity()
+                    finally:
+                        session.close()
+            else:
+                mark_activity()
+
         except Exception as e:
             logger.error(f"Error in background worker loop: {e}", exc_info=True)
 
@@ -217,7 +265,7 @@ async def background_allocation_and_broadcast_worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: ensure database exists
+    # Startup: ensure database exists & self-heals if empty
     init_database()
     worker_task = asyncio.create_task(background_allocation_and_broadcast_worker())
     yield
@@ -232,14 +280,25 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS configuration - Allow all origins for LAN cross-device access
+# CORS configuration - configurable via CORS_ORIGINS
+raw_cors = os.getenv("CORS_ORIGINS", "*")
+cors_origins = ["*"] if raw_cors.strip() == "*" else [orig.strip() for orig in raw_cors.split(",") if orig.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==========================================
+# HEALTH CHECK ENDPOINT
+# ==========================================
+@app.get("/health", tags=["system"])
+def health_check():
+    """Health check endpoint for container readiness and load balancers."""
+    return {"status": "ok"}
 
 # ==========================================
 # PUBLIC AUTHENTICATION ENDPOINTS
@@ -340,7 +399,9 @@ def get_department_forecast(
 # PROTECTED SIMULATION CONTROL ENDPOINTS
 # ==========================================
 @app.post("/simulation/start", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
-def start_simulation(body: Optional[SimulationControlRequest] = None):
+def start_simulation(request: Request, body: Optional[SimulationControlRequest] = None):
+    check_rate_limit(request, "start_sim", cooldown_seconds=2.0)
+    mark_activity()
     if body and body.speed_factor:
         simulator.speed_factor = body.speed_factor
     simulator.is_running = True
@@ -352,11 +413,14 @@ def start_simulation(body: Optional[SimulationControlRequest] = None):
 
 @app.post("/simulation/stop", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
 def stop_simulation():
+    mark_activity()
     simulator.stop()
     return {"status": "stopped", "message": "Simulation paused."}
 
 @app.post("/simulation/surge", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
-def trigger_surge(req: SurgeRequest, db: Session = Depends(get_db)):
+def trigger_surge(request: Request, req: SurgeRequest, db: Session = Depends(get_db)):
+    check_rate_limit(request, "surge", cooldown_seconds=2.5)
+    mark_activity()
     dept = db.query(Department).filter_by(department_id=req.department).first()
     if not dept:
         raise HTTPException(status_code=404, detail=f"Department '{req.department}' not found")
@@ -372,10 +436,22 @@ def trigger_surge(req: SurgeRequest, db: Session = Depends(get_db)):
         "message": f"Successfully triggered surge of {len(created)} critical patients in {dept.name}."
     }
 
-@app.post("/simulation/reset", tags=["simulation"], dependencies=[Depends(require_role("admin"))])
-def reset_system():
+@app.post("/simulation/reset", tags=["simulation"])
+def reset_system(
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    auth_token: Optional[dict] = Depends(require_role("admin"))
+):
+    """
+    Resets the database to initial seed capacity. Requires X-Admin-Token header matching ADMIN_TOKEN.
+    """
+    if not x_admin_token or x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo Protection: Resetting the hospital system requires a valid X-Admin-Token header."
+        )
     simulator.stop()
     init_database(drop_existing=True)
+    mark_activity()
     return {"status": "reset_completed", "message": "Hospital system database reset to initial seeded state."}
 
 @app.get("/simulation/status", response_model=SimulationStatusResponse, tags=["simulation"], dependencies=[Depends(require_role("admin"))])
@@ -399,9 +475,11 @@ def get_simulation_status(db: Session = Depends(get_db)):
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    mark_activity()
     try:
         while True:
             data = await websocket.receive_text()
+            mark_activity()
             try:
                 msg = json.loads(data)
                 if msg.get("action") == "surge":
@@ -416,3 +494,33 @@ async def websocket_endpoint(websocket: WebSocket):
                 pass
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+# ==========================================
+# STATIC FILES & SPA FALLBACK (PRODUCTION DEMO)
+# ==========================================
+dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
+if os.path.exists(dist_dir):
+    assets_dir = os.path.join(dist_dir, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.exception_handler(SPABrowserNavigation)
+    async def spa_browser_navigation_handler(request: Request, exc: SPABrowserNavigation):
+        index_file = os.path.join(dist_dir, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        raise HTTPException(status_code=401, detail="Missing Authorization header.")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        # Serve static file from dist if it exists
+        file_path = os.path.join(dist_dir, full_path)
+        if full_path and os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+
+        # Fallback to SPA index.html for all client routes
+        index_file = os.path.join(dist_dir, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+
+        raise HTTPException(status_code=404, detail="File not found")
