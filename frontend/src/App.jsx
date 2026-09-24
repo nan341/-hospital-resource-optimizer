@@ -8,42 +8,45 @@ import StaffLogin from './pages/StaffLogin';
 import StaffPortal from './pages/StaffPortal';
 import PatientPortal from './pages/PatientPortal';
 import ProtectedRoute from './components/ProtectedRoute';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Public Landing Gateway */}
-        <Route path="/" element={<LandingPage />} />
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Routes>
+          {/* Public Landing Gateway */}
+          <Route path="/" element={<LandingPage />} />
 
-        {/* Public Patient Services Portal */}
-        <Route path="/patient" element={<PatientPortal />} />
+          {/* Public Patient Services Portal */}
+          <Route path="/patient" element={<PatientPortal />} />
 
-        {/* Admin Login & Protected Admin Dashboard */}
-        <Route path="/admin/login" element={<AdminLogin />} />
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute tokenKey="admin_token" redirectPath="/admin/login">
-              <AdminDashboard />
-            </ProtectedRoute>
-          }
-        />
+          {/* Admin Login & Protected Admin Dashboard */}
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute tokenKey="admin_token" redirectPath="/admin/login">
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Staff Login & Protected Clinical Staff Workspace */}
-        <Route path="/staff/login" element={<StaffLogin />} />
-        <Route
-          path="/staff"
-          element={
-            <ProtectedRoute tokenKey="staff_token" redirectPath="/staff/login">
-              <StaffPortal />
-            </ProtectedRoute>
-          }
-        />
+          {/* Staff Login & Protected Clinical Staff Workspace */}
+          <Route path="/staff/login" element={<StaffLogin />} />
+          <Route
+            path="/staff"
+            element={
+              <ProtectedRoute tokenKey="staff_token" redirectPath="/staff/login">
+                <StaffPortal />
+              </ProtectedRoute>
+            }
+          />
 
-        {/* Fallback to Home */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+          {/* Fallback to Home */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

@@ -25,6 +25,58 @@ class AddAppointmentNoteRequest(BaseModel):
     content: str = Field(..., min_length=1, max_length=2000)
 
 
+@router.get("/appointments")
+def list_appointments_for_admin(
+    apt_status: Optional[str] = Query(None, alias="status", description="Filter by appointment status: scheduled, in_consultation, completed, cancelled, no_show"),
+    department_id: Optional[str] = Query(None, description="Filter by department ID"),
+    token_payload: dict = Depends(get_auth_payload),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns list of outpatient appointments for admin case-log browsing.
+    Protected: Admin role.
+    """
+    role = token_payload.get("role")
+    if role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required to browse all appointments."
+        )
+
+    query = db.query(Appointment)
+    if apt_status:
+        query = query.filter(Appointment.status == apt_status)
+    if department_id:
+        query = query.filter(Appointment.department_id == department_id)
+
+
+    apts = query.order_by(Appointment.scheduled_time.desc()).all()
+    results = []
+    for a in apts:
+        doc = a.doctor
+        dept = a.department
+        results.append({
+            "appointment_id": a.appointment_id,
+            "patient_name": a.patient_name,
+            "patient_age": a.patient_age,
+            "reason_for_visit": a.reason_for_visit,
+            "department_id": a.department_id,
+            "department_name": dept.name if dept else a.department_id,
+            "doctor_id": a.doctor_id,
+            "doctor_name": doc.role if doc else "Physician",
+            "specialty": doc.specialty if doc else "General",
+            "room_number": doc.room_number if doc else "Room 101",
+            "floor": doc.floor if doc else "1st Floor",
+            "status": a.status,
+            "queue_position": a.queue_position,
+            "department_queue_position": a.department_queue_position,
+            "estimated_wait_minutes": a.estimated_wait_minutes,
+            "scheduled_time": a.scheduled_time.isoformat() if a.scheduled_time else None
+        })
+    return results
+
+
+
 @router.get("/patient/{patient_id}")
 def get_patient_case_log(
     patient_id: str,

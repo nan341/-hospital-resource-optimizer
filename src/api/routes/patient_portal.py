@@ -134,3 +134,17 @@ def cancel_appointment(appointment_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
+@router.post("/appointment/{appointment_id}/reschedule")
+def reschedule_appointment(appointment_id: str, db: Session = Depends(get_db)):
+    """
+    Reschedules an existing scheduled appointment and assigns a new queue ticket.
+    """
+    try:
+        res = appointment_scheduler.reschedule_appointment(db, appointment_id)
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+

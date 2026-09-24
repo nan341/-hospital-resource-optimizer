@@ -228,6 +228,66 @@ class AppointmentScheduler:
             "message": "Appointment successfully cancelled."
         }
 
+    def reschedule_appointment(self, session: Session, appointment_id: str) -> Dict[str, Any]:
+        """
+        Reschedules a scheduled appointment:
+        1. Validates that the appointment exists and status is 'scheduled'.
+        2. Cancels the existing appointment and recalculates the remaining department queue.
+        3. Books a new appointment with the original patient information and assigns the least-loaded doctor.
+        4. Logs an 'appointment_rescheduled' EventLog.
+        """
+        apt = session.query(Appointment).filter_by(appointment_id=appointment_id).first()
+        if not apt:
+            raise ValueError(f"Appointment '{appointment_id}' not found.")
+
+        if apt.status != "scheduled":
+            raise ValueError(
+                f"Cannot reschedule appointment with status '{apt.status}'. "
+                f"Only 'scheduled' appointments can be rescheduled."
+            )
+
+        # Retain original patient details
+        patient_name = apt.patient_name
+        patient_age = apt.patient_age
+        reason_for_visit = apt.reason_for_visit
+        department_id = apt.department_id
+
+        # Cancel the existing appointment
+        now = datetime.now()
+        apt.status = "cancelled"
+        session.add(apt)
+        session.flush()
+
+        # Recalculate queue for remaining appointments
+        self.recalculate_department_queue(session, department_id)
+        session.commit()
+
+        # Book new appointment
+        new_apt = self.book_appointment(
+            session=session,
+            patient_name=patient_name,
+            patient_age=patient_age,
+            reason_for_visit=reason_for_visit,
+            department_id=department_id
+        )
+
+        # Log appointment_rescheduled event
+        resched_event = EventLog(
+            event_type="appointment_rescheduled",
+            entity_id=new_apt["appointment_id"],
+            description=(
+                f"Appointment {appointment_id} rescheduled to {new_apt['appointment_id']} "
+                f"for {patient_name} in {new_apt['department_name']}."
+            ),
+            triggered_by="patient_portal",
+            timestamp=now
+        )
+        session.add(resched_event)
+        session.commit()
+
+        new_apt["rescheduled_from"] = appointment_id
+        return new_apt
+
     def advance_queue(self, session: Session, department_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Advances the outpatient consultation queues:

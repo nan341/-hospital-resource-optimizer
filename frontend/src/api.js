@@ -50,6 +50,8 @@ export const getOutpatientDepartments = () => api.get('/patient-portal/departmen
 export const bookAppointment = (data) => api.post('/patient-portal/book-appointment', data);
 export const checkAppointmentStatus = (appointmentId) => api.get(`/patient-portal/appointment/${appointmentId}`);
 export const cancelAppointment = (appointmentId) => api.post(`/patient-portal/appointment/${appointmentId}/cancel`);
+export const rescheduleAppointment = (appointmentId) => api.post(`/patient-portal/appointment/${appointmentId}/reschedule`);
+
 
 // ==========================================
 // CLINICAL CASE LOG & NOTES
@@ -68,6 +70,11 @@ export const addPatientCaseNote = (patientId, data, token) => api.post(`/case-lo
 export const addAppointmentCaseNote = (appointmentId, data, token) => api.post(`/case-log/appointment/${appointmentId}/note`, data, {
   headers: token ? { Authorization: `Bearer ${token}` } : undefined
 });
+export const getAdminAppointments = (status, token) => api.get('/case-log/appointments', {
+  params: { status },
+  headers: token ? { Authorization: `Bearer ${token}` } : undefined
+});
+
 
 // ==========================================
 // STAFF PORTAL (REQUIRES STAFF TOKEN)

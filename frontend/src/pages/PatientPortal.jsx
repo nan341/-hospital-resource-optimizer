@@ -14,15 +14,18 @@ import {
   User,
   ShieldCheck,
   Stethoscope,
-  XCircle
+  XCircle,
+  RefreshCw
 } from 'lucide-react';
 import {
   getPublicAvailability,
   getOutpatientDepartments,
   bookAppointment,
   checkAppointmentStatus,
-  cancelAppointment
+  cancelAppointment,
+  rescheduleAppointment
 } from '../api';
+
 
 
 export default function PatientPortal() {
@@ -47,7 +50,8 @@ export default function PatientPortal() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState(null);
   const [cancelLoading, setCancelLoading] = useState(false);
-  const [cancelMessage, setCancelMessage] = useState(null);
+  const [rescheduleLoading, setRescheduleLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState(null);
 
   // Fetch Public Data on load
   const loadData = async () => {
@@ -112,7 +116,7 @@ export default function PatientPortal() {
     setLookupLoading(true);
     setLookupError(null);
     setLookupResult(null);
-    setCancelMessage(null);
+    setActionMessage(null);
 
     try {
       const res = await checkAppointmentStatus(lookupId.trim().toUpperCase());
@@ -131,10 +135,10 @@ export default function PatientPortal() {
       return;
     }
     setCancelLoading(true);
-    setCancelMessage(null);
+    setActionMessage(null);
     try {
       await cancelAppointment(appointmentId);
-      setCancelMessage('Appointment successfully cancelled.');
+      setActionMessage({ type: 'success', text: `Appointment ${appointmentId} was successfully cancelled.` });
       // Refresh appointment details
       const res = await checkAppointmentStatus(appointmentId);
       setLookupResult(res.data);
@@ -146,6 +150,31 @@ export default function PatientPortal() {
       setCancelLoading(false);
     }
   };
+
+  // Handle Appointment Rescheduling
+  const handleRescheduleAppointment = async (appointmentId) => {
+    if (!window.confirm(`Are you sure you want to reschedule appointment ${appointmentId}? A new ticket ID will be generated.`)) {
+      return;
+    }
+    setRescheduleLoading(true);
+    setActionMessage(null);
+    try {
+      const res = await rescheduleAppointment(appointmentId);
+      setActionMessage({
+        type: 'success',
+        text: `Appointment rescheduled! Your new Ticket ID is ${res.data.appointment_id}.`
+      });
+      setLookupId(res.data.appointment_id);
+      setLookupResult(res.data);
+      loadData();
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'Failed to reschedule appointment.';
+      alert(msg);
+    } finally {
+      setRescheduleLoading(false);
+    }
+  };
+
 
 
   return (
@@ -460,11 +489,17 @@ export default function PatientPortal() {
                 </div>
               )}
 
-              {/* Lookup Status Card */}
-              {cancelMessage && (
-                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center space-x-2">
+              {/* Action Feedback Message */}
+              {actionMessage && (
+                <div
+                  className={`mb-4 p-3 rounded-xl text-xs flex items-center space-x-2 border ${
+                    actionMessage.type === 'success'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}
+                >
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                  <span>{cancelMessage}</span>
+                  <span>{actionMessage.text}</span>
                 </div>
               )}
 
@@ -512,15 +547,25 @@ export default function PatientPortal() {
                         <div className="pt-2 border-t border-slate-200 text-xs font-medium text-indigo-700">
                           You are currently #{lookupResult.department_queue_position !== undefined ? lookupResult.department_queue_position + 1 : lookupResult.queue_position} in line (~{lookupResult.estimated_wait_minutes} mins estimated wait).
                         </div>
-                        <div className="pt-2">
+                        <div className="pt-2 grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRescheduleAppointment(lookupResult.appointment_id)}
+                            disabled={rescheduleLoading || cancelLoading}
+                            className="py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold rounded-lg text-xs border border-indigo-200 transition flex items-center justify-center space-x-1.5 disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${rescheduleLoading ? 'animate-spin' : ''}`} />
+                            <span>{rescheduleLoading ? 'Rescheduling...' : 'Reschedule'}</span>
+                          </button>
+
                           <button
                             type="button"
                             onClick={() => handleCancelAppointment(lookupResult.appointment_id)}
-                            disabled={cancelLoading}
-                            className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg text-xs border border-rose-200 transition flex items-center justify-center space-x-1.5 disabled:opacity-50"
+                            disabled={cancelLoading || rescheduleLoading}
+                            className="py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg text-xs border border-rose-200 transition flex items-center justify-center space-x-1.5 disabled:opacity-50"
                           >
                             <XCircle className="w-3.5 h-3.5" />
-                            <span>{cancelLoading ? 'Cancelling...' : 'Cancel Appointment'}</span>
+                            <span>{cancelLoading ? 'Cancelling...' : 'Cancel'}</span>
                           </button>
                         </div>
                       </>

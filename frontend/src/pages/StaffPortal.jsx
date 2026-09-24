@@ -21,7 +21,9 @@ import {
   Send,
   MessageSquare,
   History,
-  BookOpen
+  BookOpen,
+  RefreshCw,
+  CheckCircle2
 } from 'lucide-react';
 import {
   getStaffRoster,
@@ -117,29 +119,30 @@ export default function StaffPortal() {
 
 
   // 1. Fetch Roster on load
-  useEffect(() => {
-    const fetchRoster = async () => {
-      try {
-        setLoading(true);
-        const res = await getStaffRoster(token);
-        setRoster(res.data);
-        if (!selectedStaffId && res.data.length > 0) {
-          // Default to first staff or saved
-          setSelectedStaffId(res.data[0].staff_id);
-          sessionStorage.setItem('selected_staff_id', res.data[0].staff_id);
-        }
-      } catch (err) {
-        console.error('Error fetching staff roster:', err);
-        if (err.response?.status === 401 || err.response?.status === 403) {
-          handleLogout();
-        } else {
-          setError('Failed to load staff roster.');
-        }
-      } finally {
-        setLoading(false);
+  const fetchRoster = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await getStaffRoster(token);
+      setRoster(res.data);
+      if (!selectedStaffId && res.data.length > 0) {
+        // Default to first staff or saved
+        setSelectedStaffId(res.data[0].staff_id);
+        sessionStorage.setItem('selected_staff_id', res.data[0].staff_id);
       }
-    };
+    } catch (err) {
+      console.error('Error fetching staff roster:', err);
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        handleLogout();
+      } else {
+        setError('Failed to load staff roster. Please check server connectivity.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchRoster();
   }, [token]);
 
@@ -219,6 +222,37 @@ export default function StaffPortal() {
         <div className="text-center space-y-3">
           <RefreshCw className="w-8 h-8 text-indigo-400 animate-spin mx-auto" />
           <p className="text-xs text-slate-400">Loading Clinical Staff Portal...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && roster.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-center">
+          <div className="w-14 h-14 bg-rose-950/80 border border-rose-800 text-rose-400 rounded-2xl flex items-center justify-center mx-auto">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-white">Connection Error</h2>
+            <p className="text-xs text-slate-400 mt-1">{error}</p>
+          </div>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              onClick={fetchRoster}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition flex items-center space-x-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Retry Connection</span>
+            </button>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition"
+            >
+              <span>Back to Login</span>
+            </button>
+          </div>
         </div>
       </div>
     );

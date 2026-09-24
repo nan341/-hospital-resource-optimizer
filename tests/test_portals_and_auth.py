@@ -402,3 +402,75 @@ def test_doctor_and_nurse_inpatient_allocation_and_notes():
     db.close()
 
 
+def test_appointment_rescheduling():
+    # 1. Book initial appointment
+    res1 = client.post("/patient-portal/book-appointment", json={
+        "patient_name": "Oliver Twist",
+        "patient_age": 12,
+        "reason_for_visit": "Persistent cough",
+        "department_id": "opd"
+    })
+    assert res1.status_code == 200
+    old_apt = res1.json()
+    old_id = old_apt["appointment_id"]
+
+    # 2. Reschedule the appointment
+    res_resched = client.post(f"/patient-portal/appointment/{old_id}/reschedule")
+    assert res_resched.status_code == 200
+    new_apt = res_resched.json()
+    new_id = new_apt["appointment_id"]
+    assert new_id != old_id
+    assert new_apt["patient_name"] == "Oliver Twist"
+    assert new_apt["patient_age"] == 12
+    assert new_apt["reason_for_visit"] == "Persistent cough"
+    assert new_apt["status"] == "scheduled"
+    assert new_apt["rescheduled_from"] == old_id
+
+    # 3. Check old appointment is cancelled
+    res_old_check = client.get(f"/patient-portal/appointment/{old_id}")
+    assert res_old_check.status_code == 200
+    assert res_old_check.json()["status"] == "cancelled"
+
+    # 4. Trying to reschedule a cancelled appointment should return 400
+    res_bad = client.post(f"/patient-portal/appointment/{old_id}/reschedule")
+    assert res_bad.status_code == 400
+    assert "Cannot reschedule" in res_bad.json()["detail"]
+
+
+def test_admin_case_log_appointments_browser():
+    # 1. Book 2 appointments
+    client.post("/patient-portal/book-appointment", json={
+        "patient_name": "Alice Wonderland",
+        "patient_age": 25,
+        "reason_for_visit": "Checkup",
+        "department_id": "opd"
+    })
+    client.post("/patient-portal/book-appointment", json={
+        "patient_name": "Bob Builder",
+        "patient_age": 40,
+        "reason_for_visit": "Throat pain",
+        "department_id": "ent"
+    })
+
+    # 2. Unauthenticated request to /case-log/appointments -> 401
+    res_unauth = client.get("/case-log/appointments")
+    assert res_unauth.status_code == 401
+
+    # 3. Staff token to /case-log/appointments -> 403
+    res_staff = client.post("/staff/login", json={"password": "staff123"})
+    staff_token = res_staff.json()["token"]
+    res_staff_forb = client.get("/case-log/appointments", headers={"Authorization": f"Bearer {staff_token}"})
+    assert res_staff_forb.status_code == 403
+
+    # 4. Admin token to /case-log/appointments -> 200 with appointment records
+    res_admin = client.post("/admin/login", json={"password": "changeme"})
+    admin_token = res_admin.json()["token"]
+    res_admin_apts = client.get("/case-log/appointments", headers={"Authorization": f"Bearer {admin_token}"})
+    assert res_admin_apts.status_code == 200
+    apts_list = res_admin_apts.json()
+    assert len(apts_list) >= 2
+    assert any(a["patient_name"] == "Alice Wonderland" for a in apts_list)
+    assert any(a["patient_name"] == "Bob Builder" for a in apts_list)
+
+
+

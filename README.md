@@ -116,7 +116,7 @@ To run the backend server on one laptop and connect multiple client devices (e.g
 
 ## 🧪 Automated Testing
 
-Run the full pytest suite (17 tests covering allocation, forecasting, auth, patient portal, and staff portal):
+Run the full pytest suite (24 tests covering allocation, forecasting, auth, patient portal, rescheduling, staff portal, and admin case logs):
 
 ```powershell
 .\venv\Scripts\pytest tests/ -v
@@ -124,10 +124,13 @@ Run the full pytest suite (17 tests covering allocation, forecasting, auth, pati
 
 ---
 
-## 📊 Summary of Core Algorithms
+## 📊 Summary of Core Algorithms & Extensions
 
 - **Priority Queue Allocation**: Acuity-weighted sorting (Critical ESI 1 $\rightarrow$ Moderate ESI 2-3 $\rightarrow$ Low ESI 4-5 $\rightarrow$ FIFO arrival timestamp).
 - **Critical Overflow Routing**: When intensive care or primary wards are at 100% capacity, critical patients are safely diverted to the lowest-occupancy compatible department.
 - **Protected Staff Rebalancing**: Overloaded departments receive reallocated staff from slack departments (General Ward) while clinical safety invariants strictly protect ICU from donating staff.
 - **Load-Aware Staff Assignment**: Inpatient arrivals and outpatient appointments are dispatched to the least-burdened on-duty physician or nurse.
-- **Outpatient Scheduling**: OPD & ENT consultations are scheduled with instant queue position tickets, automated queue advancement, and direct physician notifications.
+- **Outpatient Scheduling & Rescheduling**: OPD & ENT consultations are scheduled with instant queue position tickets, automated queue advancement, direct physician notifications, and public self-service appointment rescheduling (`POST /patient-portal/appointment/{id}/reschedule`) with live queue recalculation.
+- **Consolidated Case Log & Clinical Timeline**: Multi-role audited timeline (`/case-log/patient/{id}` and `/case-log/appointment/{id}`) supporting initial assessments, discharge summaries, and consultation outcome notes with admin directory browsing (`GET /case-log/appointments`).
+- **Resilient Client Error Handling**: Integrated `ErrorBoundary` and reconnection UI cards preventing blank-screen faults during cross-device and LAN deployment.
+

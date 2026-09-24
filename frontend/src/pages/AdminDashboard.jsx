@@ -32,6 +32,8 @@ import EventFeed from '../components/EventFeed';
 import SurgeAlert from '../components/SurgeAlert';
 import StaffPanel from '../components/StaffPanel';
 import PatientIntakeForm from '../components/PatientIntakeForm';
+import AdminCaseLogs from '../components/AdminCaseLogs';
+
 
 import {
   getDepartments,
@@ -381,6 +383,12 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Patient & Appointment Case Logs Browser */}
+      <section>
+        <AdminCaseLogs />
+      </section>
     </div>
   );
 }
+
