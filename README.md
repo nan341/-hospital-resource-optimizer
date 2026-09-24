@@ -130,7 +130,7 @@ Run the full pytest suite (27 tests covering allocation, forecasting, auth, pati
 
 The application is fully containerized as a single-origin Docker service where FastAPI serves both the REST/WebSocket API and the built React frontend (`frontend/dist`) as static files.
 
-> **Live Demo**: `https://<your-app-name>.onrender.com` *(Replace with your deployed Render URL)*
+> **Live Demo**: [https://hospital-resource-optimizer.onrender.com](https://hospital-resource-optimizer.onrender.com)
 
 ### Environment Variables
 
