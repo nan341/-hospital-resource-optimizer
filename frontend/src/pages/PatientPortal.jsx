@@ -13,14 +13,17 @@ import {
   ChevronRight,
   User,
   ShieldCheck,
-  Stethoscope
+  Stethoscope,
+  XCircle
 } from 'lucide-react';
 import {
   getPublicAvailability,
   getOutpatientDepartments,
   bookAppointment,
-  checkAppointmentStatus
+  checkAppointmentStatus,
+  cancelAppointment
 } from '../api';
+
 
 export default function PatientPortal() {
   const navigate = useNavigate();
@@ -43,6 +46,8 @@ export default function PatientPortal() {
   const [lookupResult, setLookupResult] = useState(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState(null);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelMessage, setCancelMessage] = useState(null);
 
   // Fetch Public Data on load
   const loadData = async () => {
@@ -107,6 +112,7 @@ export default function PatientPortal() {
     setLookupLoading(true);
     setLookupError(null);
     setLookupResult(null);
+    setCancelMessage(null);
 
     try {
       const res = await checkAppointmentStatus(lookupId.trim().toUpperCase());
@@ -118,6 +124,29 @@ export default function PatientPortal() {
       setLookupLoading(false);
     }
   };
+
+  // Handle Appointment Cancellation
+  const handleCancelAppointment = async (appointmentId) => {
+    if (!window.confirm(`Are you sure you want to cancel appointment ${appointmentId}?`)) {
+      return;
+    }
+    setCancelLoading(true);
+    setCancelMessage(null);
+    try {
+      await cancelAppointment(appointmentId);
+      setCancelMessage('Appointment successfully cancelled.');
+      // Refresh appointment details
+      const res = await checkAppointmentStatus(appointmentId);
+      setLookupResult(res.data);
+      loadData();
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'Failed to cancel appointment.';
+      alert(msg);
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
@@ -432,6 +461,13 @@ export default function PatientPortal() {
               )}
 
               {/* Lookup Status Card */}
+              {cancelMessage && (
+                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  <span>{cancelMessage}</span>
+                </div>
+              )}
+
               {lookupResult && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3 animate-in fade-in duration-300">
                   <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
@@ -442,6 +478,10 @@ export default function PatientPortal() {
                           ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                           : lookupResult.status === 'completed'
                           ? 'bg-slate-200 text-slate-700 border-slate-300'
+                          : lookupResult.status === 'cancelled'
+                          ? 'bg-rose-100 text-rose-800 border-rose-300'
+                          : lookupResult.status === 'no_show'
+                          ? 'bg-amber-100 text-amber-800 border-amber-300'
                           : 'bg-indigo-100 text-indigo-800 border-indigo-300'
                       }`}
                     >
@@ -449,6 +489,10 @@ export default function PatientPortal() {
                         ? 'Now In Consultation'
                         : lookupResult.status === 'completed'
                         ? 'Completed'
+                        : lookupResult.status === 'cancelled'
+                        ? 'Cancelled'
+                        : lookupResult.status === 'no_show'
+                        ? 'No-Show'
                         : `Waiting (#${lookupResult.department_queue_position !== undefined ? lookupResult.department_queue_position + 1 : lookupResult.queue_position})`}
                     </span>
                   </div>
@@ -464,14 +508,37 @@ export default function PatientPortal() {
                       <span className="font-semibold">{lookupResult.floor} • {lookupResult.room_number}</span>
                     </p>
                     {lookupResult.status === 'scheduled' && (
-                      <div className="pt-2 border-t border-slate-200 text-xs font-medium text-indigo-700">
-                        You are currently #{lookupResult.department_queue_position !== undefined ? lookupResult.department_queue_position + 1 : lookupResult.queue_position} in line (~{lookupResult.estimated_wait_minutes} mins estimated wait).
-                      </div>
+                      <>
+                        <div className="pt-2 border-t border-slate-200 text-xs font-medium text-indigo-700">
+                          You are currently #{lookupResult.department_queue_position !== undefined ? lookupResult.department_queue_position + 1 : lookupResult.queue_position} in line (~{lookupResult.estimated_wait_minutes} mins estimated wait).
+                        </div>
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => handleCancelAppointment(lookupResult.appointment_id)}
+                            disabled={cancelLoading}
+                            className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold rounded-lg text-xs border border-rose-200 transition flex items-center justify-center space-x-1.5 disabled:opacity-50"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>{cancelLoading ? 'Cancelling...' : 'Cancel Appointment'}</span>
+                          </button>
+                        </div>
+                      </>
                     )}
                     {lookupResult.status === 'in_consultation' && (
                       <div className="pt-2 border-t border-slate-200 text-xs font-bold text-emerald-700 flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4" />
                         Please enter {lookupResult.room_number} now for your consultation.
+                      </div>
+                    )}
+                    {lookupResult.status === 'cancelled' && (
+                      <div className="pt-2 border-t border-slate-200 text-xs text-rose-600 font-medium">
+                        This appointment was cancelled. You can book a new one anytime.
+                      </div>
+                    )}
+                    {lookupResult.status === 'no_show' && (
+                      <div className="pt-2 border-t border-slate-200 text-xs text-amber-700 font-medium">
+                        This appointment was marked as a no-show because the consultation window elapsed.
                       </div>
                     )}
                   </div>

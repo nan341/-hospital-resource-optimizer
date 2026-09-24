@@ -56,15 +56,21 @@ def get_staff_dashboard(staff_id: str, db: Session = Depends(get_db)):
 
     assigned_patients = []
     if not is_outpatient:
-        # Inpatient staff: currently admitted patients
+        # Inpatient staff: currently admitted patients assigned to this doctor or nurse
+        from sqlalchemy import or_
         patients = db.query(Patient).filter(
-            Patient.assigned_staff_id == staff_id,
+            or_(
+                Patient.assigned_doctor_id == staff_id,
+                Patient.assigned_nurse_id == staff_id,
+                Patient.assigned_staff_id == staff_id
+            ),
             Patient.status == "admitted"
         ).order_by(Patient.arrival_time.desc()).all()
 
         assigned_patients = [
             {
                 "patient_id": p.patient_id,
+                "name": p.name,
                 "age": p.age,
                 "reason_for_visit": p.reason_for_visit or "General Inpatient Care",
                 "severity": p.severity,

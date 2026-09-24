@@ -43,18 +43,19 @@ class AppointmentScheduler:
         if dept.total_beds > 0:
             raise ValueError(f"Department '{dept.name}' is an inpatient department. Appointments are only for outpatient clinics (OPD, ENT).")
 
-        # 2. Find on-duty doctors in this department (strictly exclude off_duty)
+        # 2. Find on-duty doctors in this department (strictly exclude off_duty and non-doctors)
         doctors = session.query(Staff).filter(
             Staff.department_id == department_id,
+            Staff.role_category == "doctor",
             Staff.status.in_(["on_duty", "reassigned"])
         ).all()
 
         if not doctors:
-            total_dept_staff = session.query(Staff).filter(Staff.department_id == department_id).count()
-            off_duty_staff = session.query(Staff).filter(Staff.department_id == department_id, Staff.status == "off_duty").count()
+            total_dept_staff = session.query(Staff).filter(Staff.department_id == department_id, Staff.role_category == "doctor").count()
+            off_duty_staff = session.query(Staff).filter(Staff.department_id == department_id, Staff.role_category == "doctor", Staff.status == "off_duty").count()
             raise ValueError(
                 f"No available doctors currently on duty in department '{dept.name}' (ID: '{department_id}'). "
-                f"Total staff: {total_dept_staff} (on duty: 0, off duty: {off_duty_staff})."
+                f"Total doctors: {total_dept_staff} (on duty: 0, off duty: {off_duty_staff})."
             )
 
         # Calculate active workload for each on-duty doctor (count of scheduled + in_consultation)
@@ -159,9 +160,78 @@ class AppointmentScheduler:
             "scheduled_time": appointment.scheduled_time.isoformat()
         }
 
+    def recalculate_department_queue(self, session: Session, department_id: str):
+        """
+        Recalculates department-wide queue positions and parallel wait times for all waiting patients in this department,
+        as well as doctor-specific queue positions.
+        """
+        doctors = session.query(Staff).filter_by(department_id=department_id).all()
+        on_duty_doctors = [doc for doc in doctors if doc.status in ["on_duty", "reassigned"] and doc.role_category == "doctor"]
+
+        all_dept_waiting = session.query(Appointment).filter(
+            Appointment.department_id == department_id,
+            Appointment.status == "scheduled"
+        ).order_by(Appointment.department_queue_position.asc(), Appointment.scheduled_time.asc()).all()
+
+        num_active_docs = len(on_duty_doctors)
+        avg_consult_dept = (sum(d.avg_consult_minutes or 15 for d in on_duty_doctors) / max(1, num_active_docs)) if on_duty_doctors else 15
+
+        for idx, apt in enumerate(all_dept_waiting):
+            apt.department_queue_position = idx
+            apt.estimated_wait_minutes = round((idx / max(1, num_active_docs)) * avg_consult_dept)
+            session.add(apt)
+
+        for doc in doctors:
+            doc_waiting = session.query(Appointment).filter(
+                Appointment.doctor_id == doc.staff_id,
+                Appointment.status == "scheduled"
+            ).order_by(Appointment.queue_position.asc(), Appointment.scheduled_time.asc()).all()
+            for doc_idx, doc_apt in enumerate(doc_waiting, start=1):
+                doc_apt.queue_position = doc_idx
+                session.add(doc_apt)
+
+    def cancel_appointment(self, session: Session, appointment_id: str) -> Dict[str, Any]:
+        """
+        Cancels a scheduled appointment and recalculates the remaining department queue.
+        Rejects if status is not 'scheduled'.
+        """
+        apt = session.query(Appointment).filter_by(appointment_id=appointment_id).first()
+        if not apt:
+            raise ValueError(f"Appointment '{appointment_id}' not found.")
+
+        if apt.status != "scheduled":
+            raise ValueError(f"Cannot cancel appointment with status '{apt.status}'. Only 'scheduled' appointments can be cancelled.")
+
+        now = datetime.now()
+        apt.status = "cancelled"
+        session.add(apt)
+
+        event = EventLog(
+            event_type="appointment_cancelled",
+            entity_id=apt.appointment_id,
+            description=f"Appointment {apt.appointment_id} for {apt.patient_name} cancelled by patient.",
+            triggered_by="patient_portal",
+            timestamp=now
+        )
+        session.add(event)
+        session.flush()
+
+        # Recalculate remaining department queue
+        self.recalculate_department_queue(session, apt.department_id)
+        session.commit()
+
+
+        return {
+            "status": "success",
+            "appointment_id": apt.appointment_id,
+            "new_status": "cancelled",
+            "message": "Appointment successfully cancelled."
+        }
+
     def advance_queue(self, session: Session, department_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Advances the outpatient consultation queues:
+        - Detects automatic no-shows (scheduled appointments older than doctor's avg_consult_minutes).
         - For each doctor with an appointment 'in_consultation', checks if completed.
         - If doctor is free (no 'in_consultation'), moves earliest 'scheduled' appointment to 'in_consultation'.
         - Recalculates department_queue_position and estimated_wait_minutes across all remaining scheduled appointments in the department.
@@ -175,12 +245,35 @@ class AppointmentScheduler:
 
         completed_count = 0
         consulting_count = 0
+        no_show_count = 0
 
         for d_id in dept_ids:
             doctors = session.query(Staff).filter_by(department_id=d_id).all()
-            on_duty_doctors = [doc for doc in doctors if doc.status in ["on_duty", "reassigned"]]
 
             for doc in doctors:
+                # 0. Automatic No-Show Detection:
+                # Any scheduled appointment whose scheduled_time is older than avg_consult_minutes in the past
+                threshold_mins = doc.avg_consult_minutes or 15
+                scheduled_apts = session.query(Appointment).filter(
+                    Appointment.doctor_id == doc.staff_id,
+                    Appointment.status == "scheduled"
+                ).all()
+
+                for s_apt in scheduled_apts:
+                    if s_apt.scheduled_time and (now - s_apt.scheduled_time).total_seconds() > (threshold_mins * 60.0):
+                        s_apt.status = "no_show"
+                        session.add(s_apt)
+                        no_show_count += 1
+
+                        evt_ns = EventLog(
+                            event_type="appointment_no_show",
+                            entity_id=s_apt.appointment_id,
+                            description=f"Appointment {s_apt.appointment_id} for {s_apt.patient_name} marked NO-SHOW (exceeded {threshold_mins}m window). Doctor slot released.",
+                            triggered_by="rule_engine",
+                            timestamp=now
+                        )
+                        session.add(evt_ns)
+
                 # 1. Check if active consultation has completed
                 in_consult = session.query(Appointment).filter(
                     Appointment.doctor_id == doc.staff_id,
@@ -230,34 +323,14 @@ class AppointmentScheduler:
                         )
                         session.add(notif)
 
-            # 3. Recalculate department-wide queue positions and parallel wait times for all waiting patients in this department
-            all_dept_waiting = session.query(Appointment).filter(
-                Appointment.department_id == d_id,
-                Appointment.status == "scheduled"
-            ).order_by(Appointment.scheduled_time.asc()).all()
-
-            num_active_docs = len(on_duty_doctors)
-            avg_consult_dept = (sum(d.avg_consult_minutes or 15 for d in on_duty_doctors) / max(1, num_active_docs)) if on_duty_doctors else 15
-
-            for idx, apt in enumerate(all_dept_waiting):
-                apt.department_queue_position = idx
-                apt.estimated_wait_minutes = round((idx / max(1, num_active_docs)) * avg_consult_dept)
-                session.add(apt)
-
-            # 4. Also update doctor-specific queue positions
-            for doc in doctors:
-                doc_waiting = session.query(Appointment).filter(
-                    Appointment.doctor_id == doc.staff_id,
-                    Appointment.status == "scheduled"
-                ).order_by(Appointment.scheduled_time.asc()).all()
-                for doc_idx, doc_apt in enumerate(doc_waiting, start=1):
-                    doc_apt.queue_position = doc_idx
-                    session.add(doc_apt)
+            # 3. Recalculate department queue positions
+            self.recalculate_department_queue(session, d_id)
 
         session.commit()
         return {
             "completed": completed_count,
-            "started_consultation": consulting_count
+            "started_consultation": consulting_count,
+            "no_shows": no_show_count
         }
 
     def get_appointment_status(self, session: Session, appointment_id: str) -> Optional[Dict[str, Any]]:

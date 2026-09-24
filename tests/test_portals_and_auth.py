@@ -210,3 +210,195 @@ def test_department_level_queue_and_off_duty_filtering():
     })
     assert res_none.status_code == 400
     assert "No available doctors" in res_none.json()["detail"]
+
+
+def test_appointment_cancellation_and_queue_recalc():
+    # 1. Book 3 appointments
+    res1 = client.post("/patient-portal/book-appointment", json={
+        "patient_name": "Patient Alpha",
+        "department_id": "opd"
+    })
+    res2 = client.post("/patient-portal/book-appointment", json={
+        "patient_name": "Patient Beta",
+        "department_id": "opd"
+    })
+    res3 = client.post("/patient-portal/book-appointment", json={
+        "patient_name": "Patient Gamma",
+        "department_id": "opd"
+    })
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+    assert res3.status_code == 200
+
+    apt2_id = res2.json()["appointment_id"]
+    apt3_id = res3.json()["appointment_id"]
+
+    # 2. Cancel Patient Beta (apt2)
+    res_cancel = client.post(f"/patient-portal/appointment/{apt2_id}/cancel")
+    assert res_cancel.status_code == 200
+    assert res_cancel.json()["new_status"] == "cancelled"
+
+    # Verify status is now cancelled
+    res_check2 = client.get(f"/patient-portal/appointment/{apt2_id}")
+    assert res_check2.status_code == 200
+    assert res_check2.json()["status"] == "cancelled"
+
+    # Cancelling again should fail with 400
+    res_cancel_again = client.post(f"/patient-portal/appointment/{apt2_id}/cancel")
+    assert res_cancel_again.status_code == 400
+
+    # 3. Check Patient Gamma (apt3) has recalculated department queue position
+    res_check3 = client.get(f"/patient-portal/appointment/{apt3_id}")
+    assert res_check3.status_code == 200
+    assert res_check3.json()["department_queue_position"] == 1
+
+
+def test_case_log_and_clinical_notes_access_control():
+    # 1. Staff and Admin logins
+    res_staff = client.post("/staff/login", json={"password": "staff123"})
+    staff_token = res_staff.json()["token"]
+    staff_headers = {"Authorization": f"Bearer {staff_token}"}
+
+    res_admin = client.post("/admin/login", json={"password": "changeme"})
+    admin_token = res_admin.json()["token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # 2. Book an outpatient appointment
+    res_apt = client.post("/patient-portal/book-appointment", json={
+        "patient_name": "Marcus Vance",
+        "patient_age": 42,
+        "reason_for_visit": "Ear pain",
+        "department_id": "ent"
+    })
+    assert res_apt.status_code == 200
+    apt_id = res_apt.json()["appointment_id"]
+    assigned_doc_id = res_apt.json()["doctor_id"]
+
+    # 3. Unassigned staff member cannot view case log (403)
+    unassigned_staff_id = "staff-er-1"
+    res_forbidden = client.get(
+        f"/case-log/appointment/{apt_id}?staff_id={unassigned_staff_id}",
+        headers=staff_headers
+    )
+    assert res_forbidden.status_code == 403
+
+    # 4. Assigned staff can view case log
+    res_case = client.get(
+        f"/case-log/appointment/{apt_id}?staff_id={assigned_doc_id}",
+        headers=staff_headers
+    )
+    assert res_case.status_code == 200
+    case_data = res_case.json()
+    assert case_data["patient_name"] == "Marcus Vance"
+    assert len(case_data["timeline"]) >= 1
+
+    # 5. Assigned staff adds a consultation note
+    res_note = client.post(
+        f"/case-log/appointment/{apt_id}/note",
+        json={
+            "staff_id": assigned_doc_id,
+            "note_type": "consultation_outcome",
+            "content": "Otitis media diagnosed. Prescribed amoxicillin 500mg TID x 7 days."
+        },
+        headers=staff_headers
+    )
+    assert res_note.status_code == 200
+    assert res_note.json()["status"] == "success"
+
+    # Invalid note type returns 400
+    res_bad_note = client.post(
+        f"/case-log/appointment/{apt_id}/note",
+        json={
+            "staff_id": assigned_doc_id,
+            "note_type": "invalid_type",
+            "content": "Some notes"
+        },
+        headers=staff_headers
+    )
+    assert res_bad_note.status_code == 400
+
+    # 6. Admin can view case log without staff_id
+    res_admin_case = client.get(
+        f"/case-log/appointment/{apt_id}",
+        headers=admin_headers
+    )
+    assert res_admin_case.status_code == 200
+    assert len(res_admin_case.json()["timeline"]) >= 2  # Event + Note
+
+
+def test_doctor_and_nurse_inpatient_allocation_and_notes():
+    # 1. Admin login to register intake
+    res_admin = client.post("/admin/login", json={"password": "changeme"})
+    admin_headers = {"Authorization": f"Bearer {res_admin.json()['token']}"}
+
+    intake_payload = {
+        "name": "Sarah Connor",
+        "age": 29,
+        "department_needed": "er",
+        "severity": "moderate",
+        "reason_for_visit": "Fracture evaluation",
+        "predicted_stay_hours": 4.0
+    }
+    res_intake = client.post("/patients/intake", json=intake_payload, headers=admin_headers)
+    assert res_intake.status_code == 200
+    p_id = res_intake.json()["patient_id"]
+
+
+
+    # 2. Run allocation cycle via rule engine
+    from src.allocation.engine import HospitalAllocationEngine
+    from src.api.db import SessionLocal
+    from src.db.models import Patient
+
+    db = SessionLocal()
+    engine = HospitalAllocationEngine()
+    engine.run_allocation_cycle(db)
+
+    # 3. Verify Patient has both doctor and nurse assigned
+    patient = db.query(Patient).filter_by(patient_id=p_id).first()
+    assert patient is not None
+    assert patient.assigned_doctor_id is not None
+    assert patient.assigned_nurse_id is not None
+    assert patient.assigned_doctor_id != patient.assigned_nurse_id
+    doc_id = patient.assigned_doctor_id
+    nurse_id = patient.assigned_nurse_id
+
+    # 4. Check staff login and add initial_assessment note by doctor
+    res_staff = client.post("/staff/login", json={"password": "staff123"})
+    staff_headers = {"Authorization": f"Bearer {res_staff.json()['token']}"}
+
+    res_note1 = client.post(
+        f"/case-log/patient/{p_id}/note",
+        json={
+            "staff_id": doc_id,
+            "note_type": "initial_assessment",
+            "content": "Patient evaluated in ER. Vitals stable. Left arm splint applied."
+        },
+        headers=staff_headers
+    )
+    assert res_note1.status_code == 200
+
+    # 5. Add discharge summary note
+    res_note2 = client.post(
+        f"/case-log/patient/{p_id}/note",
+        json={
+            "staff_id": doc_id,
+            "note_type": "discharge_summary",
+            "content": "Patient stable for discharge with follow-up in orthopedic clinic."
+        },
+        headers=staff_headers
+    )
+    assert res_note2.status_code == 200
+
+    # 6. Nurse can also view case log
+    res_nurse_case = client.get(
+        f"/case-log/patient/{p_id}?staff_id={nurse_id}",
+        headers=staff_headers
+    )
+    assert res_nurse_case.status_code == 200
+    assert res_nurse_case.json()["patient_name"] == "Sarah Connor"
+    assert len(res_nurse_case.json()["timeline"]) >= 3
+
+    db.close()
+
+

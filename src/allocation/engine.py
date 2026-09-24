@@ -10,7 +10,7 @@ from sqlalchemy import case, asc
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from src.api.db import SessionLocal
-from src.db.models import Department, Bed, Staff, DiagnosticFacility, Patient, EventLog, StaffNotification
+from src.db.models import Department, Bed, Staff, DiagnosticFacility, Patient, EventLog, StaffNotification, PatientCaseNote
 from src.allocation.rules import (
     SEVERITY_WEIGHTS,
     find_overflow_bed,
@@ -51,14 +51,17 @@ class HospitalAllocationEngine:
                         bed.current_patient_id = None
                         bed.last_updated = now
 
-                # Log discharge event
-                dept = session.query(Department).filter_by(department_id=patient.department_needed).first()
-                dept_name = dept.name if dept else patient.department_needed
+                # Check if discharge summary note exists
+                has_summary = session.query(PatientCaseNote).filter(
+                    PatientCaseNote.patient_id == patient.patient_id,
+                    PatientCaseNote.note_type == "discharge_summary"
+                ).first() is not None
 
+                summary_flag = "" if has_summary else " (no discharge summary recorded)"
                 event = EventLog(
                     event_type="patient_discharged",
                     entity_id=patient.patient_id,
-                    description=f"Patient {patient.patient_id} successfully treated and discharged from {dept_name}. Bed {patient.assigned_bed_id or 'N/A'} is now AVAILABLE.",
+                    description=f"Patient {patient.patient_id} successfully treated and discharged from {dept_name}. Bed {patient.assigned_bed_id or 'N/A'} is now AVAILABLE.{summary_flag}",
                     triggered_by="rule_engine",
                     timestamp=now
                 )
@@ -104,17 +107,27 @@ class HospitalAllocationEngine:
             )
             session.add(diag_event)
 
-    def find_least_loaded_staff(self, session: Session, department_id: str) -> Optional[Staff]:
-        """Finds the on-duty staff member with the fewest currently-admitted patients."""
+    def find_least_loaded_staff(
+        self,
+        session: Session,
+        department_id: str,
+        role_category: str = "doctor"
+    ) -> Optional[Staff]:
+        """Finds the on-duty staff member with the fewest currently-admitted patients for the given role_category."""
         from sqlalchemy import func
+        if role_category == "doctor":
+            join_cond = (Patient.assigned_doctor_id == Staff.staff_id) & (Patient.status == "admitted")
+        elif role_category == "nurse":
+            join_cond = (Patient.assigned_nurse_id == Staff.staff_id) & (Patient.status == "admitted")
+        else:
+            join_cond = (Patient.assigned_staff_id == Staff.staff_id) & (Patient.status == "admitted")
+
         staff_load = (
             session.query(Staff.staff_id, func.count(Patient.patient_id).label("load"))
-            .outerjoin(
-                Patient,
-                (Patient.assigned_staff_id == Staff.staff_id) & (Patient.status == "admitted")
-            )
+            .outerjoin(Patient, join_cond)
             .filter(
                 Staff.department_id == department_id,
+                Staff.role_category == role_category,
                 Staff.status.in_(["on_duty", "reassigned"])
             )
             .group_by(Staff.staff_id)
@@ -195,20 +208,38 @@ class HospitalAllocationEngine:
                     patient.status = "admitted"
                     patient.assigned_bed_id = primary_bed.bed_id
 
-                    # Assign load-aware least-burdened staff member
-                    staff = self.find_least_loaded_staff(session, patient.department_needed)
-                    if staff:
-                        patient.assigned_staff_id = staff.staff_id
-                        age_info = f", Age: {patient.age}" if patient.age is not None else ""
-                        reason_info = f" | Reason: {patient.reason_for_visit}" if patient.reason_for_visit else ""
-                        notif = StaffNotification(
-                            staff_id=staff.staff_id,
+                    # Assign load-aware separate doctor and nurse
+                    assigned_doctor = self.find_least_loaded_staff(session, patient.department_needed, role_category="doctor")
+                    assigned_nurse = self.find_least_loaded_staff(session, patient.department_needed, role_category="nurse")
+
+                    if assigned_doctor:
+                        patient.assigned_doctor_id = assigned_doctor.staff_id
+                    if assigned_nurse:
+                        patient.assigned_nurse_id = assigned_nurse.staff_id
+                    patient.assigned_staff_id = assigned_doctor.staff_id if assigned_doctor else (assigned_nurse.staff_id if assigned_nurse else None)
+
+                    age_info = f", Age: {patient.age}" if patient.age is not None else ""
+                    reason_info = f" | Reason: {patient.reason_for_visit}" if patient.reason_for_visit else ""
+
+                    if assigned_doctor:
+                        notif_doc = StaffNotification(
+                            staff_id=assigned_doctor.staff_id,
                             patient_id=patient.patient_id,
-                            message=f"New Patient Admitted: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {primary_bed.bed_id} in {dept_name}",
+                            message=f"New Patient Admitted: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {primary_bed.bed_id} in {dept_name} (Role: Attending Doctor)",
                             is_read=False,
                             created_at=now
                         )
-                        session.add(notif)
+                        session.add(notif_doc)
+
+                    if assigned_nurse:
+                        notif_nurse = StaffNotification(
+                            staff_id=assigned_nurse.staff_id,
+                            patient_id=patient.patient_id,
+                            message=f"New Patient Admitted: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {primary_bed.bed_id} in {dept_name} (Role: Primary Nurse)",
+                            is_read=False,
+                            created_at=now
+                        )
+                        session.add(notif_nurse)
 
                     event = EventLog(
                         event_type="bed_assigned",
@@ -239,20 +270,38 @@ class HospitalAllocationEngine:
                         overflow_dept = overflow_bed.department
                         overflow_dept_name = overflow_dept.name if overflow_dept else overflow_bed.department_id
 
-                        # Assign load-aware least-burdened staff in overflow department
-                        staff = self.find_least_loaded_staff(session, overflow_bed.department_id)
-                        if staff:
-                            patient.assigned_staff_id = staff.staff_id
-                            age_info = f", Age: {patient.age}" if patient.age is not None else ""
-                            reason_info = f" | Reason: {patient.reason_for_visit}" if patient.reason_for_visit else ""
-                            notif = StaffNotification(
-                                staff_id=staff.staff_id,
+                        # Assign load-aware separate doctor and nurse in overflow department
+                        assigned_doctor = self.find_least_loaded_staff(session, overflow_bed.department_id, role_category="doctor")
+                        assigned_nurse = self.find_least_loaded_staff(session, overflow_bed.department_id, role_category="nurse")
+
+                        if assigned_doctor:
+                            patient.assigned_doctor_id = assigned_doctor.staff_id
+                        if assigned_nurse:
+                            patient.assigned_nurse_id = assigned_nurse.staff_id
+                        patient.assigned_staff_id = assigned_doctor.staff_id if assigned_doctor else (assigned_nurse.staff_id if assigned_nurse else None)
+
+                        age_info = f", Age: {patient.age}" if patient.age is not None else ""
+                        reason_info = f" | Reason: {patient.reason_for_visit}" if patient.reason_for_visit else ""
+
+                        if assigned_doctor:
+                            notif_doc = StaffNotification(
+                                staff_id=assigned_doctor.staff_id,
                                 patient_id=patient.patient_id,
-                                message=f"Critical Overflow Patient: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {overflow_bed.bed_id} in {overflow_dept_name}",
+                                message=f"Critical Overflow Patient: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {overflow_bed.bed_id} in {overflow_dept_name} (Role: Attending Doctor)",
                                 is_read=False,
                                 created_at=now
                             )
-                            session.add(notif)
+                            session.add(notif_doc)
+
+                        if assigned_nurse:
+                            notif_nurse = StaffNotification(
+                                staff_id=assigned_nurse.staff_id,
+                                patient_id=patient.patient_id,
+                                message=f"Critical Overflow Patient: {patient.patient_id} [{patient.severity.upper()}]{age_info}{reason_info} -> Bed {overflow_bed.bed_id} in {overflow_dept_name} (Role: Primary Nurse)",
+                                is_read=False,
+                                created_at=now
+                            )
+                            session.add(notif_nurse)
 
                         overflow_event = EventLog(
                             event_type="overflow_assigned",

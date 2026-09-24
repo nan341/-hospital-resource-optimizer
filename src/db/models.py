@@ -48,6 +48,7 @@ class Staff(Base):
 
     staff_id = Column(String(50), primary_key=True, index=True)
     role = Column(String(50), nullable=False)  # doctor, nurse, technician, specialist
+    role_category = Column(String(20), nullable=False, default="nurse")  # doctor, nurse, technician, specialist
     department_id = Column(String(50), ForeignKey("departments.department_id"), nullable=False, index=True)
     shift_start = Column(String(20), default="08:00")
     shift_end = Column(String(20), default="20:00")
@@ -80,6 +81,7 @@ class Patient(Base):
     __tablename__ = "patients"
 
     patient_id = Column(String(50), primary_key=True, index=True)
+    name = Column(String(150), nullable=True)
     arrival_time = Column(DateTime, default=datetime.now, index=True)
     department_needed = Column(String(50), ForeignKey("departments.department_id"), nullable=False, index=True)
     severity = Column(String(50), nullable=False, index=True)  # critical, moderate, low
@@ -87,6 +89,8 @@ class Patient(Base):
     status = Column(String(50), default="waiting", index=True)  # waiting, admitted, in_diagnostic, discharged
     assigned_bed_id = Column(String(50), ForeignKey("beds.bed_id", use_alter=True, name="fk_patient_bed"), nullable=True)
     assigned_staff_id = Column(String(50), ForeignKey("staff.staff_id", use_alter=True, name="fk_patient_staff"), nullable=True)
+    assigned_doctor_id = Column(String(50), ForeignKey("staff.staff_id", use_alter=True, name="fk_patient_doctor"), nullable=True)
+    assigned_nurse_id = Column(String(50), ForeignKey("staff.staff_id", use_alter=True, name="fk_patient_nurse"), nullable=True)
     age = Column(Integer, nullable=True)
     reason_for_visit = Column(Text, nullable=True)
 
@@ -94,6 +98,8 @@ class Patient(Base):
     department = relationship("Department", back_populates="patients", foreign_keys=[department_needed])
     assigned_bed = relationship("Bed", foreign_keys=[assigned_bed_id], post_update=True)
     assigned_staff = relationship("Staff", foreign_keys=[assigned_staff_id], post_update=True)
+    assigned_doctor = relationship("Staff", foreign_keys=[assigned_doctor_id], post_update=True)
+    assigned_nurse = relationship("Staff", foreign_keys=[assigned_nurse_id], post_update=True)
 
 
 class Appointment(Base):
@@ -105,6 +111,7 @@ class Appointment(Base):
     reason_for_visit = Column(Text, nullable=True)
     department_id = Column(String(50), ForeignKey("departments.department_id"), nullable=False)
     doctor_id = Column(String(50), ForeignKey("staff.staff_id"), nullable=True)
+    nurse_id = Column(String(50), ForeignKey("staff.staff_id"), nullable=True)
     scheduled_time = Column(DateTime, default=datetime.now)
     estimated_wait_minutes = Column(Integer, default=0)
     queue_position = Column(Integer, nullable=True)
@@ -115,6 +122,24 @@ class Appointment(Base):
     # Relationships
     department = relationship("Department")
     doctor = relationship("Staff", foreign_keys=[doctor_id])
+    nurse = relationship("Staff", foreign_keys=[nurse_id])
+
+
+class PatientCaseNote(Base):
+    __tablename__ = "patient_case_notes"
+
+    note_id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(String(50), ForeignKey("patients.patient_id"), nullable=True, index=True)
+    appointment_id = Column(String(50), ForeignKey("appointments.appointment_id"), nullable=True, index=True)
+    staff_id = Column(String(50), ForeignKey("staff.staff_id"), nullable=False, index=True)
+    note_type = Column(String(30), nullable=False)  # initial_assessment, discharge_summary, consultation_outcome
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+
+    # Relationships
+    patient = relationship("Patient", foreign_keys=[patient_id])
+    appointment = relationship("Appointment", foreign_keys=[appointment_id])
+    staff = relationship("Staff", foreign_keys=[staff_id])
 
 
 class StaffNotification(Base):
@@ -137,7 +162,7 @@ class EventLog(Base):
 
     event_id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     timestamp = Column(DateTime, default=datetime.now, index=True)
-    event_type = Column(String(100), nullable=False, index=True)  # patient_arrival, bed_assigned, overflow_assigned, diagnostic_assigned, diagnostic_released, diagnostic_unavailable, staff_reassigned, critical_no_capacity, discharge, appointment_booked
+    event_type = Column(String(100), nullable=False, index=True)  # patient_arrival, bed_assigned, overflow_assigned, diagnostic_assigned, diagnostic_released, diagnostic_unavailable, staff_reassigned, critical_no_capacity, discharge, appointment_booked, clinical_note_added, appointment_cancelled, appointment_no_show
     entity_id = Column(String(100), nullable=False)
     description = Column(Text, nullable=False)
-    triggered_by = Column(String(50), default="rule_engine")  # prediction_engine, manual, rule_engine, simulation, patient_portal
+    triggered_by = Column(String(50), default="rule_engine")  # prediction_engine, manual, rule_engine, simulation, patient_portal, staff

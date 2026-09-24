@@ -49,6 +49,25 @@ export const getPublicAvailability = () => api.get('/patient-portal/availability
 export const getOutpatientDepartments = () => api.get('/patient-portal/departments');
 export const bookAppointment = (data) => api.post('/patient-portal/book-appointment', data);
 export const checkAppointmentStatus = (appointmentId) => api.get(`/patient-portal/appointment/${appointmentId}`);
+export const cancelAppointment = (appointmentId) => api.post(`/patient-portal/appointment/${appointmentId}/cancel`);
+
+// ==========================================
+// CLINICAL CASE LOG & NOTES
+// ==========================================
+export const getPatientCaseLog = (patientId, staffId, token) => api.get(`/case-log/patient/${patientId}`, {
+  params: staffId ? { staff_id: staffId } : undefined,
+  headers: token ? { Authorization: `Bearer ${token}` } : undefined
+});
+export const getAppointmentCaseLog = (appointmentId, staffId, token) => api.get(`/case-log/appointment/${appointmentId}`, {
+  params: staffId ? { staff_id: staffId } : undefined,
+  headers: token ? { Authorization: `Bearer ${token}` } : undefined
+});
+export const addPatientCaseNote = (patientId, data, token) => api.post(`/case-log/patient/${patientId}/note`, data, {
+  headers: token ? { Authorization: `Bearer ${token}` } : undefined
+});
+export const addAppointmentCaseNote = (appointmentId, data, token) => api.post(`/case-log/appointment/${appointmentId}/note`, data, {
+  headers: token ? { Authorization: `Bearer ${token}` } : undefined
+});
 
 // ==========================================
 // STAFF PORTAL (REQUIRES STAFF TOKEN)

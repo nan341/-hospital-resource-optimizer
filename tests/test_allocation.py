@@ -146,30 +146,38 @@ def test_load_aware_staff_assignment():
     engine_inst = HospitalAllocationEngine()
     try:
         now = datetime.now()
-        # Add 3 patients to ER (which has 4 on-duty staff)
-        p1 = Patient(patient_id="PAT-STAFF-1", department_needed="er", severity="moderate", arrival_time=now, status="waiting")
-        p2 = Patient(patient_id="PAT-STAFF-2", department_needed="er", severity="moderate", arrival_time=now + timedelta(seconds=1), status="waiting")
-        p3 = Patient(patient_id="PAT-STAFF-3", department_needed="er", severity="moderate", arrival_time=now + timedelta(seconds=2), status="waiting")
+        # Add 3 patients to General Ward (1 doctor, 6 nurses)
+        p1 = Patient(patient_id="PAT-STAFF-1", department_needed="general_ward", severity="moderate", arrival_time=now, status="waiting")
+        p2 = Patient(patient_id="PAT-STAFF-2", department_needed="general_ward", severity="moderate", arrival_time=now + timedelta(seconds=1), status="waiting")
+        p3 = Patient(patient_id="PAT-STAFF-3", department_needed="general_ward", severity="moderate", arrival_time=now + timedelta(seconds=2), status="waiting")
 
-        session.add_all([p1, p2, p3])
+        # Add 2 patients to ICU (2 doctors, 3 nurses)
+        p4 = Patient(patient_id="PAT-ICU-1", department_needed="icu", severity="critical", arrival_time=now, status="waiting")
+        p5 = Patient(patient_id="PAT-ICU-2", department_needed="icu", severity="critical", arrival_time=now + timedelta(seconds=1), status="waiting")
+
+        session.add_all([p1, p2, p3, p4, p5])
         session.commit()
 
         # Run allocation
         res = engine_inst.run_allocation_cycle(session)
-        assert res["admitted_primary"] == 3
+        assert res["admitted_primary"] == 5
 
-        # Retrieve the 3 patients and their assigned staff IDs
-        p_records = session.query(Patient).filter(Patient.patient_id.in_(["PAT-STAFF-1", "PAT-STAFF-2", "PAT-STAFF-3"])).all()
-        assigned_staff_ids = [p.assigned_staff_id for p in p_records]
+        # In General Ward: all 3 patients assigned to the ward physician, but distributed across 3 distinct nurses
+        gw_patients = session.query(Patient).filter(Patient.patient_id.in_(["PAT-STAFF-1", "PAT-STAFF-2", "PAT-STAFF-3"])).all()
+        gw_nurse_ids = [p.assigned_nurse_id for p in gw_patients]
+        assert len(set(gw_nurse_ids)) == 3
 
-        # Confirm all 3 patients got assigned to staff
-        assert all(s_id is not None for s_id in assigned_staff_ids)
-
-        # Confirm staff IDs are distinct (distributed across least-loaded staff rather than all piled on the first staff member)
-        assert len(set(assigned_staff_ids)) == 3
+        # In ICU: 2 patients load-balanced across 2 distinct intensivists/doctors and 2 distinct nurses
+        icu_patients = session.query(Patient).filter(Patient.patient_id.in_(["PAT-ICU-1", "PAT-ICU-2"])).all()
+        icu_doc_ids = [p.assigned_doctor_id for p in icu_patients]
+        icu_nurse_ids = [p.assigned_nurse_id for p in icu_patients]
+        assert len(set(icu_doc_ids)) == 2
+        assert len(set(icu_nurse_ids)) == 2
 
     finally:
         session.close()
+
+
 
 def test_staff_rebalancing_protects_icu():
     from src.allocation.rules import evaluate_staff_rebalancing

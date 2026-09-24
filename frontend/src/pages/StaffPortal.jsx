@@ -14,17 +14,27 @@ import {
   MapPin,
   Stethoscope,
   Users,
-  CheckCircle2,
-  RefreshCw,
-  Power
+  Power,
+  FileText,
+  PlusCircle,
+  X,
+  Send,
+  MessageSquare,
+  History,
+  BookOpen
 } from 'lucide-react';
 import {
   getStaffRoster,
   getStaffDashboard,
   getStaffNotifications,
   markNotificationRead,
-  toggleStaffDuty
+  toggleStaffDuty,
+  getPatientCaseLog,
+  getAppointmentCaseLog,
+  addPatientCaseNote,
+  addAppointmentCaseNote
 } from '../api';
+
 
 export default function StaffPortal() {
   const navigate = useNavigate();
@@ -41,6 +51,15 @@ export default function StaffPortal() {
   const [error, setError] = useState(null);
   const [dutyLoading, setDutyLoading] = useState(false);
 
+  // Case Log & Clinical Notes State
+  const [caseEntity, setCaseEntity] = useState(null); // { type: 'patient' | 'appointment', id: string, name: string }
+  const [caseTimeline, setCaseTimeline] = useState([]);
+  const [caseLoading, setCaseLoading] = useState(false);
+  const [caseError, setCaseError] = useState(null);
+  const [noteType, setNoteType] = useState('initial_assessment');
+  const [noteContent, setNoteContent] = useState('');
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
+
   const pollRef = useRef(null);
 
   const handleLogout = () => {
@@ -48,6 +67,54 @@ export default function StaffPortal() {
     sessionStorage.removeItem('selected_staff_id');
     navigate('/');
   };
+
+  const handleOpenCaseLog = async (type, id, name) => {
+    setCaseEntity({ type, id, name });
+    setNoteType(type === 'patient' ? 'initial_assessment' : 'consultation_outcome');
+    setNoteContent('');
+    setCaseError(null);
+    setCaseLoading(true);
+    try {
+      const res = type === 'patient'
+        ? await getPatientCaseLog(id, selectedStaffId, token)
+        : await getAppointmentCaseLog(id, selectedStaffId, token);
+      setCaseTimeline(res.data.timeline || []);
+    } catch (err) {
+      setCaseError(err.response?.data?.detail || 'Failed to fetch case log.');
+    } finally {
+      setCaseLoading(false);
+    }
+  };
+
+  const handleAddNote = async (e) => {
+    e.preventDefault();
+    if (!noteContent.trim() || !caseEntity) return;
+    setNoteSubmitting(true);
+    setCaseError(null);
+    try {
+      const payload = {
+        staff_id: selectedStaffId,
+        note_type: noteType,
+        content: noteContent.trim()
+      };
+      if (caseEntity.type === 'patient') {
+        await addPatientCaseNote(caseEntity.id, payload, token);
+      } else {
+        await addAppointmentCaseNote(caseEntity.id, payload, token);
+      }
+      setNoteContent('');
+      // Reload case log timeline
+      const res = caseEntity.type === 'patient'
+        ? await getPatientCaseLog(caseEntity.id, selectedStaffId, token)
+        : await getAppointmentCaseLog(caseEntity.id, selectedStaffId, token);
+      setCaseTimeline(res.data.timeline || []);
+    } catch (err) {
+      setCaseError(err.response?.data?.detail || 'Failed to add clinical note.');
+    } finally {
+      setNoteSubmitting(false);
+    }
+  };
+
 
   // 1. Fetch Roster on load
   useEffect(() => {
@@ -429,6 +496,15 @@ export default function StaffPortal() {
                         <span>ID: {apt.appointment_id}</span>
                         <span>Est. Wait: {apt.estimated_wait_minutes}m</span>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCaseLog('appointment', apt.appointment_id, apt.patient_name)}
+                        className="mt-3 w-full py-1.5 bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-200 text-xs font-semibold rounded-lg transition flex items-center justify-center space-x-1.5"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Case Log & Notes</span>
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -463,7 +539,7 @@ export default function StaffPortal() {
                     >
                       <div>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="font-bold text-sm text-slate-100 font-mono">{p.patient_id}</span>
+                          <span className="font-bold text-sm text-slate-100 font-mono">{p.name ? `${p.name} (${p.patient_id})` : p.patient_id}</span>
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
                               p.severity === 'critical'
@@ -497,6 +573,15 @@ export default function StaffPortal() {
                         <span>Est. Stay: {p.predicted_stay_hours}h</span>
                         <span>{p.arrival_time ? new Date(p.arrival_time).toLocaleTimeString() : ''}</span>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCaseLog('patient', p.patient_id, p.name || p.patient_id)}
+                        className="mt-3 w-full py-1.5 bg-cyan-950/70 hover:bg-cyan-900 border border-cyan-700/60 text-cyan-200 text-xs font-semibold rounded-lg transition flex items-center justify-center space-x-1.5"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Case Log & Notes</span>
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -505,6 +590,197 @@ export default function StaffPortal() {
           )}
         </main>
       )}
+
+      {/* CASE LOG & CLINICAL NOTES MODAL */}
+      {caseEntity && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 md:p-6 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-xl">
+                  <BookOpen className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>Clinical Case Log: {caseEntity.name}</span>
+                    <span className="text-xs font-mono font-normal text-slate-400">({caseEntity.id})</span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {caseEntity.type === 'patient' ? 'Inpatient Clinical History & Assessments' : 'Outpatient Consultation Log & Outcome'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCaseEntity(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-200 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {caseError && (
+                <div className="p-3 bg-rose-950/80 border border-rose-800 text-rose-300 rounded-xl text-xs flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{caseError}</span>
+                </div>
+              )}
+
+              {/* SECTION: ADD CLINICAL NOTE FORM */}
+              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center space-x-2 text-xs font-bold text-slate-200">
+                  <PlusCircle className="w-4 h-4 text-indigo-400" />
+                  <span>Add Clinical Note</span>
+                </div>
+
+                <form onSubmit={handleAddNote} className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                      Note Category
+                    </label>
+                    <select
+                      value={noteType}
+                      onChange={(e) => setNoteType(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      {caseEntity.type === 'patient' ? (
+                        <>
+                          <option value="initial_assessment">Initial Clinical Assessment</option>
+                          <option value="discharge_summary">Discharge Summary</option>
+                        </>
+                      ) : (
+                        <option value="consultation_outcome">Consultation Outcome & Treatment Plan</option>
+                      )}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                      Clinical Notes & Findings
+                    </label>
+                    <textarea
+                      rows={3}
+                      required
+                      placeholder={
+                        caseEntity.type === 'patient'
+                          ? 'Enter vitals, assessment findings, treatment plan or discharge instructions...'
+                          : 'Enter diagnosis, prescribed medications, follow-up advice...'
+                      }
+                      value={noteContent}
+                      onChange={(e) => setNoteContent(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={noteSubmitting || !noteContent.trim()}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition flex items-center space-x-1.5 disabled:opacity-50"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{noteSubmitting ? 'Saving Note...' : 'Record Clinical Note'}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* SECTION: CHRONOLOGICAL TIMELINE */}
+              <div>
+                <div className="flex items-center space-x-2 text-xs font-bold text-slate-200 mb-4">
+                  <History className="w-4 h-4 text-cyan-400" />
+                  <span>Timeline & Case History</span>
+                </div>
+
+                {caseLoading ? (
+                  <div className="py-10 text-center text-xs text-slate-400 space-y-2">
+                    <RefreshCw className="w-6 h-6 text-indigo-400 animate-spin mx-auto" />
+                    <p>Loading case timeline...</p>
+                  </div>
+                ) : caseTimeline.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-500 italic bg-slate-950/40 rounded-xl border border-slate-800/60">
+                    No history recorded for this case yet.
+                  </div>
+                ) : (
+                  <div className="relative pl-6 space-y-4 border-l border-slate-800">
+                    {caseTimeline.map((item, idx) => {
+                      const isNote = item.type === 'clinical_note';
+                      return (
+                        <div key={idx} className="relative group">
+                          {/* Dot on line */}
+                          <div
+                            className={`absolute -left-[31px] top-1.5 w-3 h-3 rounded-full border-2 border-slate-900 ${
+                              isNote
+                                ? item.note_type === 'discharge_summary'
+                                  ? 'bg-emerald-400'
+                                  : 'bg-indigo-400'
+                                : 'bg-cyan-500'
+                            }`}
+                          />
+
+                          <div
+                            className={`p-3.5 rounded-xl border text-xs space-y-1.5 transition ${
+                              isNote
+                                ? item.note_type === 'discharge_summary'
+                                  ? 'bg-emerald-950/30 border-emerald-700/50 text-slate-200'
+                                  : 'bg-indigo-950/30 border-indigo-700/50 text-slate-200'
+                                : 'bg-slate-950/60 border-slate-800/80 text-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span
+                                className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                                  isNote
+                                    ? item.note_type === 'discharge_summary'
+                                      ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/60'
+                                      : 'bg-indigo-900/60 text-indigo-300 border border-indigo-700/60'
+                                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                }`}
+                              >
+                                {isNote
+                                  ? item.note_type.replace('_', ' ')
+                                  : item.event_type.replace('_', ' ')}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-500">
+                                {item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}
+                              </span>
+                            </div>
+
+                            <p className="text-xs leading-relaxed">
+                              {isNote ? item.content : item.description}
+                            </p>
+
+                            <div className="text-[10px] text-slate-500 font-medium">
+                              {isNote ? (
+                                <span>Author: {item.author_name || item.author_staff_id}</span>
+                              ) : (
+                                <span>Triggered By: {item.author || 'System Engine'}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3 border-t border-slate-800 bg-slate-950/60 flex justify-end">
+              <button
+                onClick={() => setCaseEntity(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition"
+              >
+                Close Case Log
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

@@ -86,3 +86,24 @@ def require_role(required_role: str) -> Callable:
         return payload
 
     return dependency
+
+def get_auth_payload(authorization: Optional[str] = Header(None)) -> dict:
+    """
+    Extracts and validates JWT token from Authorization header, returning payload.
+    Raises 401 if missing or invalid.
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header."
+        )
+
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed Authorization header. Format must be: Bearer <token>"
+        )
+
+    token = parts[1]
+    return decode_token(token)

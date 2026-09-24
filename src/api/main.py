@@ -27,7 +27,7 @@ from src.api.schemas import (
     SimulationStatusResponse,
     ForecastResponse
 )
-from src.api.routes import patients, beds, staff, events, patient_portal, staff_portal
+from src.api.routes import patients, beds, staff, events, patient_portal, staff_portal, case_log
 from src.data_pipeline.synthetic_generator import simulator
 from src.allocation.engine import allocation_engine
 from src.allocation.appointment_engine import appointment_scheduler
@@ -262,6 +262,9 @@ app.include_router(patient_portal.router)
 
 # Staff Portal (Requires Staff Role Token)
 app.include_router(staff_portal.router)
+
+# Consolidated Case Log & Clinical Notes (Self-authenticating: Admin or Assigned Clinician)
+app.include_router(case_log.router)
 
 # Protected Admin Sub-routers (Require Admin Role Token)
 app.include_router(patients.router, dependencies=[Depends(require_role("admin"))])

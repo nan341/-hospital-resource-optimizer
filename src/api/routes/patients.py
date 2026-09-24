@@ -47,6 +47,7 @@ def register_patient_intake(
     reason = req.reason_for_visit or req.notes
     patient = Patient(
         patient_id=patient_id,
+        name=req.name,
         arrival_time=now,
         department_needed=req.department_needed,
         severity=req.severity,
