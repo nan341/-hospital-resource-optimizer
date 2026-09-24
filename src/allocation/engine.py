@@ -44,12 +44,15 @@ class HospitalAllocationEngine:
                 patient.status = "discharged"
 
                 # Free the bed
+                dept_name = patient.department_needed
                 if patient.assigned_bed_id:
                     bed = session.query(Bed).filter_by(bed_id=patient.assigned_bed_id).first()
                     if bed:
                         bed.status = "available"
                         bed.current_patient_id = None
                         bed.last_updated = now
+                        if bed.department:
+                            dept_name = bed.department.name
 
                 # Check if discharge summary note exists
                 has_summary = session.query(PatientCaseNote).filter(
