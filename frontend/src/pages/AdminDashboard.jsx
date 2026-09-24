@@ -174,12 +174,13 @@ export default function AdminDashboard() {
   const forecastChartData = Object.keys(forecasts).map((deptId) => {
     const fc = forecasts[deptId];
     return {
-      department: fc.department_name.replace('Emergency Room (ER)', 'ER').replace('Intensive Care Unit (ICU)', 'ICU'),
-      predicted: fc.predicted_count,
-      ci_lower: fc.ci_lower,
-      ci_upper: fc.ci_upper,
+      department: (fc?.department_name ?? deptId).replace('Emergency Room (ER)', 'ER').replace('Intensive Care Unit (ICU)', 'ICU'),
+      predicted: fc?.predicted_count ?? 0,
+      ci_lower: fc?.ci_lower ?? 0,
+      ci_upper: fc?.ci_upper ?? 0,
     };
   });
+
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 space-y-6">

@@ -79,8 +79,9 @@ export default function PatientQueue({ waitingPatients = [] }) {
                       {patient.patient_id}
                     </div>
                     <div className="text-[10px] text-slate-400 capitalize truncate">
-                      Dept: {patient.department_needed.replace('_', ' ')}
+                      Dept: {(patient.department_needed ?? '').replace(/_/g, ' ')}
                     </div>
+
                   </div>
                 </div>
 

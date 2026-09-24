@@ -45,8 +45,9 @@ export default function StaffPanel({ staff = [], departments = [] }) {
               {/* Department Title */}
               <div className="flex items-center justify-between border-b border-slate-800/60 pb-2 mb-2">
                 <span className="text-xs font-bold text-slate-200 truncate">
-                  {dept.name.replace('Emergency Room (ER)', 'ER').replace('Intensive Care Unit (ICU)', 'ICU')}
+                  {(dept.name ?? '').replace('Emergency Room (ER)', 'ER').replace('Intensive Care Unit (ICU)', 'ICU')}
                 </span>
+
                 <span className="text-[10px] text-slate-400 font-mono">
                   {deptOnDuty.length} Active
                 </span>

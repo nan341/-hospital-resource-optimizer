@@ -90,7 +90,15 @@ export default function StaffPortal() {
 
   const handleAddNote = async (e) => {
     e.preventDefault();
-    if (!noteContent.trim() || !caseEntity) return;
+    if (!caseEntity) return;
+    if (!noteType) {
+      setCaseError('Please select a valid note category before submitting.');
+      return;
+    }
+    if (!noteContent.trim()) {
+      setCaseError('Clinical note content cannot be empty.');
+      return;
+    }
     setNoteSubmitting(true);
     setCaseError(null);
     try {
@@ -116,6 +124,7 @@ export default function StaffPortal() {
       setNoteSubmitting(false);
     }
   };
+
 
 
   // 1. Fetch Roster on load
@@ -740,7 +749,7 @@ export default function StaffPortal() {
                 ) : (
                   <div className="relative pl-6 space-y-4 border-l border-slate-800">
                     {caseTimeline.map((item, idx) => {
-                      const isNote = item.type === 'clinical_note';
+                      const isNote = item.type === 'note' || item.type === 'clinical_note';
                       return (
                         <div key={idx} className="relative group">
                           {/* Dot on line */}
@@ -774,8 +783,8 @@ export default function StaffPortal() {
                                 }`}
                               >
                                 {isNote
-                                  ? item.note_type.replace('_', ' ')
-                                  : item.event_type.replace('_', ' ')}
+                                  ? (item.note_type ?? 'clinical_note').replace(/_/g, ' ')
+                                  : (item.event_type ?? 'event').replace(/_/g, ' ')}
                               </span>
                               <span className="text-[10px] font-mono text-slate-500">
                                 {item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}
@@ -788,9 +797,9 @@ export default function StaffPortal() {
 
                             <div className="text-[10px] text-slate-500 font-medium">
                               {isNote ? (
-                                <span>Author: {item.author_name || item.author_staff_id}</span>
+                                <span>Author: {item.author_name || item.author_id || item.author_staff_id || 'Clinician'}</span>
                               ) : (
-                                <span>Triggered By: {item.author || 'System Engine'}</span>
+                                <span>Triggered By: {item.triggered_by || item.author || 'System Engine'}</span>
                               )}
                             </div>
                           </div>
