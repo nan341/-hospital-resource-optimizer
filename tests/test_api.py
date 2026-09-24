@@ -141,3 +141,38 @@ def test_patient_intake():
         "severity": "moderate"
     }, headers=headers)
     assert res_bad_dept.status_code == 404
+
+
+def test_er_saturation_doctor_and_nurse_busy_and_event_timestamps():
+    headers = get_admin_headers()
+    # 1. Trigger surge in ER (4 patients)
+    res_surge = client.post("/simulation/surge", json={"department": "er", "patient_count": 4}, headers=headers)
+    assert res_surge.status_code == 200
+
+    # 2. Query staff list via admin API
+    res_staff = client.get("/staff?department_id=er", headers=headers)
+    assert res_staff.status_code == 200
+    er_staff = res_staff.json()
+
+    er_doc = next((s for s in er_staff if s["staff_id"] == "staff-er-1"), None)
+    er_nurse1 = next((s for s in er_staff if s["staff_id"] == "staff-er-2"), None)
+    er_nurse2 = next((s for s in er_staff if s["staff_id"] == "staff-er-3"), None)
+
+    assert er_doc is not None and er_doc["active_patients"] > 0 and er_doc["is_busy"] is True
+    assert er_nurse1 is not None and er_nurse1["active_patients"] > 0 and er_nurse1["is_busy"] is True
+    assert er_nurse2 is not None and er_nurse2["active_patients"] > 0 and er_nurse2["is_busy"] is True
+
+    # 3. Query events and confirm valid ISO timestamps and types
+    res_events = client.get("/events?limit=20", headers=headers)
+    assert res_events.status_code == 200
+    events = res_events.json()
+    assert len(events) >= 4
+
+    from datetime import datetime
+    for e in events:
+        assert "timestamp" in e
+        # Timestamp must be a valid datetime string
+        dt = datetime.fromisoformat(e["timestamp"])
+        assert dt is not None
+        assert dt.year >= 2024
+

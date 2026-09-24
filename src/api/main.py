@@ -118,10 +118,15 @@ async def background_allocation_and_broadcast_worker():
                     for b in session.query(Bed).all()
                 ]
 
+                from sqlalchemy import or_
                 all_staff = []
                 for s in session.query(Staff).all():
                     active_count = session.query(Patient).filter(
-                        Patient.assigned_staff_id == s.staff_id,
+                        or_(
+                            Patient.assigned_doctor_id == s.staff_id,
+                            Patient.assigned_nurse_id == s.staff_id,
+                            Patient.assigned_staff_id == s.staff_id
+                        ),
                         Patient.status == "admitted"
                     ).count()
                     all_staff.append({
@@ -154,14 +159,15 @@ async def background_allocation_and_broadcast_worker():
                 recent_events = [
                     {
                         "event_id": e.event_id,
-                        "timestamp": e.timestamp.strftime("%H:%M:%S"),
+                        "timestamp": e.timestamp.isoformat() if e.timestamp else None,
                         "event_type": e.event_type,
                         "entity_id": e.entity_id,
                         "description": e.description,
                         "triggered_by": e.triggered_by
                     }
-                    for e in session.query(EventLog).order_by(EventLog.timestamp.desc()).limit(30).all()
+                    for e in session.query(EventLog).order_by(EventLog.timestamp.desc(), EventLog.event_id.desc()).limit(30).all()
                 ]
+
 
                 diagnostics_data = [
                     {

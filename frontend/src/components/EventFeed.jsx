@@ -80,13 +80,22 @@ export default function EventFeed({ events = [] }) {
 
   const formatTime = (isoString) => {
     if (!isoString) return '';
+    if (typeof isoString !== 'string') return '';
+    // If string is already in HH:MM:SS or HH:MM format (e.g. "14:20:05")
+    if (/^\d{2}:\d{2}(:\d{2})?$/.test(isoString.trim())) {
+      return isoString.trim();
+    }
     try {
       const d = new Date(isoString);
+      if (isNaN(d.getTime())) {
+        return isoString;
+      }
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch {
       return isoString;
     }
   };
+
 
   return (
     <div className="bg-slate-900/85 border border-slate-800 rounded-xl p-4 shadow-lg flex flex-col h-full">

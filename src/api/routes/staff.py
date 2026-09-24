@@ -19,11 +19,16 @@ def get_staff(
     if status:
         query = query.filter(Staff.status == status)
     
+    from sqlalchemy import or_
     staff_members = query.order_by(Staff.staff_id).all()
     results = []
     for s in staff_members:
         active_count = db.query(Patient).filter(
-            Patient.assigned_staff_id == s.staff_id,
+            or_(
+                Patient.assigned_doctor_id == s.staff_id,
+                Patient.assigned_nurse_id == s.staff_id,
+                Patient.assigned_staff_id == s.staff_id
+            ),
             Patient.status == "admitted"
         ).count()
         results.append(StaffResponse(
