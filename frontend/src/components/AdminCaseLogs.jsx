@@ -16,9 +16,12 @@ import {
   BedDouble,
   Clock,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  AlertTriangle,
+  ArrowRightLeft
 } from 'lucide-react';
 import {
+  getDepartments,
   getPatients,
   getAdminAppointments,
   getPatientCaseLog,
@@ -28,10 +31,12 @@ import {
 export default function AdminCaseLogs() {
   const token = sessionStorage.getItem('admin_token');
 
+  const [departments, setDepartments] = useState([]);
   const [patients, setPatients] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterType, setFilterType] = useState('all'); // 'all' | 'inpatient' | 'outpatient'
+  const [selectedDept, setSelectedDept] = useState('all'); // 'all' | department_id
   const [searchQuery, setSearchQuery] = useState('');
 
   // Selected Modal Case Log State
@@ -43,10 +48,12 @@ export default function AdminCaseLogs() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [ptsRes, aptsRes] = await Promise.all([
+      const [deptsRes, ptsRes, aptsRes] = await Promise.all([
+        getDepartments(token).catch(() => ({ data: [] })),
         getPatients(undefined, token).catch(() => ({ data: [] })),
         getAdminAppointments(undefined, token).catch(() => ({ data: [] }))
       ]);
+      setDepartments(deptsRes.data || []);
       setPatients(ptsRes.data || []);
       setAppointments(aptsRes.data || []);
     } catch (err) {
@@ -60,13 +67,23 @@ export default function AdminCaseLogs() {
     loadData();
   }, [token]);
 
+  const getDeptName = (deptId) => {
+    if (!deptId) return 'General';
+    const d = departments.find((dept) => dept.department_id === deptId);
+    return d ? d.name : deptId.toUpperCase();
+  };
+
   const handleOpenCase = async (type, id, name) => {
-    setSelectedCase({ type, id, name });
+    // Determine type strictly: 'patient' vs 'appointment'
+    const isPatient = type === 'patient' || (typeof id === 'string' && id.startsWith('PAT-'));
+    const resolvedType = isPatient ? 'patient' : 'appointment';
+
+    setSelectedCase({ type: resolvedType, id, name });
     setCaseLoading(true);
     setCaseError(null);
     setCaseDetails(null);
     try {
-      const res = type === 'patient'
+      const res = isPatient
         ? await getPatientCaseLog(id, undefined, token)
         : await getAppointmentCaseLog(id, undefined, token);
       setCaseDetails(res.data);
@@ -77,28 +94,42 @@ export default function AdminCaseLogs() {
     }
   };
 
-  // Combine & Filter records
+  // Combine & Map records with explicit type discriminators
   const allRecords = [
-    ...patients.map((p) => ({
-      recordType: 'inpatient',
-      id: p.patient_id,
-      name: p.name || p.patient_id,
-      age: p.age,
-      reason: p.reason_for_visit,
-      department: p.department_needed,
-      doctor: p.assigned_doctor_name || p.assigned_staff_id,
-      nurse: p.assigned_nurse_name,
-      status: p.status,
-      severity: p.severity,
-      time: p.arrival_time
-    })),
+    ...patients.map((p) => {
+      const isOverflow = Boolean(
+        p.is_overflow ||
+        (p.assigned_bed_department && p.assigned_bed_department !== p.department_needed)
+      );
+      return {
+        recordType: 'patient', // Explicit 'patient' discriminator
+        id: p.patient_id,
+        name: p.name || p.patient_id,
+        age: p.age,
+        reason: p.reason_for_visit,
+        department_needed: p.department_needed, // ORIGINALLY REQUESTED department
+        department: getDeptName(p.department_needed),
+        assigned_bed_id: p.assigned_bed_id,
+        assigned_bed_department: p.assigned_bed_department,
+        is_overflow: isOverflow,
+        doctor: p.assigned_doctor_name || p.assigned_staff_id,
+        nurse: p.assigned_nurse_name,
+        status: p.status,
+        severity: p.severity,
+        time: p.arrival_time
+      };
+    }),
     ...appointments.map((a) => ({
-      recordType: 'outpatient',
+      recordType: 'appointment', // Explicit 'appointment' discriminator
       id: a.appointment_id,
       name: a.patient_name,
       age: a.patient_age,
       reason: a.reason_for_visit,
-      department: a.department_name,
+      department_needed: a.department_id,
+      department: a.department_name || getDeptName(a.department_id),
+      assigned_bed_id: null,
+      assigned_bed_department: null,
+      is_overflow: false,
       doctor: a.doctor_name,
       nurse: null,
       status: a.status,
@@ -107,10 +138,18 @@ export default function AdminCaseLogs() {
     }))
   ];
 
+  // Filtering: Type, Department (Requested Ward), and Search query
   const filteredRecords = allRecords.filter((rec) => {
-    if (filterType === 'inpatient' && rec.recordType !== 'inpatient') return false;
-    if (filterType === 'outpatient' && rec.recordType !== 'outpatient') return false;
+    // 1. Type Filter
+    if (filterType === 'inpatient' && rec.recordType !== 'patient') return false;
+    if (filterType === 'outpatient' && rec.recordType !== 'appointment') return false;
 
+    // 2. Department Filter: Must match Patient.department_needed (Requested department, NOT bed location)
+    if (selectedDept !== 'all' && rec.department_needed !== selectedDept) {
+      return false;
+    }
+
+    // 3. Search Query Filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchName = (rec.name || '').toLowerCase().includes(q);
@@ -122,6 +161,12 @@ export default function AdminCaseLogs() {
     }
     return true;
   });
+
+  // Calculate True Requested Demand vs Physical Bed Occupancy metrics per inpatient department
+  const inpatientDepts = departments.filter((d) => d.total_beds > 0);
+  const overflowedPatientsCount = patients.filter(
+    (p) => p.is_overflow || (p.assigned_bed_department && p.assigned_bed_department !== p.department_needed)
+  ).length;
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">
@@ -137,9 +182,15 @@ export default function AdminCaseLogs() {
               <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
                 Audited Timeline
               </span>
+              {overflowedPatientsCount > 0 && (
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-400" />
+                  {overflowedPatientsCount} Overflow Active
+                </span>
+              )}
             </h3>
             <p className="text-xs text-slate-400">
-              Browse consolidated clinical notes, doctor assessments, and historical events across all departments
+              Browse consolidated clinical notes, doctor assessments, and historical events categorized by originally requested department
             </p>
           </div>
         </div>
@@ -154,47 +205,101 @@ export default function AdminCaseLogs() {
         </button>
       </div>
 
+      {/* True Demand vs Bed Occupancy Ribbon */}
+      {inpatientDepts.length > 0 && (
+        <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          {inpatientDepts.map((d) => {
+            const requestedCount = patients.filter((p) => p.department_needed === d.department_id && p.status !== 'discharged').length;
+            const physicalOccupancy = d.occupied_beds;
+            const hasOverflowDemand = requestedCount > physicalOccupancy;
+            return (
+              <div key={d.department_id} className="p-2 rounded-lg bg-slate-900/80 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-300 text-[11px] truncate">{d.name}</span>
+                  {hasOverflowDemand && (
+                    <span className="text-[9px] font-bold text-amber-400 bg-amber-950 px-1.5 py-0.2 rounded border border-amber-800">
+                      Surge
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 flex items-baseline justify-between text-[11px]">
+                  <span className="text-slate-400">Requested Demand:</span>
+                  <span className={`font-bold font-mono ${hasOverflowDemand ? 'text-amber-300' : 'text-slate-200'}`}>
+                    {requestedCount}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between text-[11px]">
+                  <span className="text-slate-500">Physical Beds:</span>
+                  <span className="font-mono text-slate-400">{physicalOccupancy}/{d.total_beds}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Filter Pills */}
-        <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
-          <button
-            type="button"
-            onClick={() => setFilterType('all')}
-            className={`px-3 py-1 rounded-lg transition ${
-              filterType === 'all'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            All Cases ({allRecords.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilterType('inpatient')}
-            className={`px-3 py-1 rounded-lg transition ${
-              filterType === 'inpatient'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Inpatient Admissions ({patients.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilterType('outpatient')}
-            className={`px-3 py-1 rounded-lg transition ${
-              filterType === 'outpatient'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Outpatient Appointments ({appointments.length})
-          </button>
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Filter Pills */}
+          <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setFilterType('all')}
+              className={`px-3 py-1 rounded-lg transition ${
+                filterType === 'all'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              All Cases ({allRecords.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterType('inpatient')}
+              className={`px-3 py-1 rounded-lg transition ${
+                filterType === 'inpatient'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Inpatients ({patients.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterType('outpatient')}
+              className={`px-3 py-1 rounded-lg transition ${
+                filterType === 'outpatient'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Outpatients ({appointments.length})
+            </button>
+          </div>
+
+          {/* Department / Ward Filter Dropdown */}
+          <div className="flex items-center space-x-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs">
+            <Building className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+            <select
+              value={selectedDept}
+              onChange={(e) => setSelectedDept(e.target.value)}
+              className="bg-transparent text-xs text-slate-200 font-medium focus:outline-none cursor-pointer pr-1"
+            >
+              <option value="all" className="bg-slate-950 text-slate-200">
+                All Requested Departments
+              </option>
+              {departments.map((d) => (
+                <option key={d.department_id} value={d.department_id} className="bg-slate-950 text-slate-200">
+                  {d.name} {d.total_beds > 0 ? '(Inpatient)' : '(Outpatient)'}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Search Input */}
-        <div className="relative flex-1 sm:max-w-xs">
+        <div className="relative flex-1 lg:max-w-xs">
           <input
             type="text"
             placeholder="Search patient, ID, doctor..."
@@ -218,7 +323,7 @@ export default function AdminCaseLogs() {
       <div className="max-h-96 overflow-y-auto border border-slate-800/80 rounded-xl overflow-hidden">
         {filteredRecords.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs italic bg-slate-950/40">
-            No matching patient or appointment case records found.
+            No matching patient or appointment case records found for this filter.
           </div>
         ) : (
           <table className="w-full text-left border-collapse text-xs">
@@ -226,7 +331,7 @@ export default function AdminCaseLogs() {
               <tr className="bg-slate-950/80 border-b border-slate-800 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">
                 <th className="py-2.5 px-3.5">Record / ID</th>
                 <th className="py-2.5 px-3.5">Patient Name</th>
-                <th className="py-2.5 px-3.5">Department</th>
+                <th className="py-2.5 px-3.5">Requested Dept</th>
                 <th className="py-2.5 px-3.5">Care Team</th>
                 <th className="py-2.5 px-3.5">Status</th>
                 <th className="py-2.5 px-3.5 text-right">Action</th>
@@ -243,7 +348,7 @@ export default function AdminCaseLogs() {
                     <div className="flex items-center space-x-2">
                       <span
                         className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                          rec.recordType === 'inpatient'
+                          rec.recordType === 'patient'
                             ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
                             : 'bg-purple-950 text-purple-300 border border-purple-800'
                         }`}
@@ -266,6 +371,13 @@ export default function AdminCaseLogs() {
                       <Building className="w-3 h-3 text-slate-500" />
                       <span>{rec.department}</span>
                     </div>
+                    {/* Overflow Tag */}
+                    {rec.is_overflow && (
+                      <div className="mt-1 flex items-center gap-1 text-[9px] font-bold text-amber-300 bg-amber-950/80 border border-amber-700/80 px-1.5 py-0.5 rounded">
+                        <AlertTriangle className="w-2.5 h-2.5 text-amber-400 flex-shrink-0" />
+                        <span>Req: {getDeptName(rec.department_needed)} → Bed: {getDeptName(rec.assigned_bed_department)} (Overflow)</span>
+                      </div>
+                    )}
                   </td>
 
                   <td className="py-3 px-3.5 text-slate-300 text-[11px]">
@@ -295,7 +407,7 @@ export default function AdminCaseLogs() {
                           : 'bg-rose-950 text-rose-300 border-rose-700'
                       }`}
                     >
-                      {rec.status.replace('_', ' ')}
+                      {(rec.status ?? '').replace(/_/g, ' ')}
                     </span>
                   </td>
 
@@ -335,7 +447,9 @@ export default function AdminCaseLogs() {
                     <span className="text-xs font-mono font-normal text-slate-400">({selectedCase.id})</span>
                   </h3>
                   <p className="text-xs text-slate-400">
-                    {selectedCase.type === 'patient' ? 'Inpatient Clinical History & Bed Allocation' : 'Outpatient Consultation & Queue Log'}
+                    {selectedCase.type === 'patient' || selectedCase.id?.startsWith('PAT-')
+                      ? 'Inpatient Clinical History & Bed Allocation'
+                      : 'Outpatient Consultation & Queue Log'}
                   </p>
                 </div>
               </div>
@@ -356,10 +470,25 @@ export default function AdminCaseLogs() {
                 </div>
               )}
 
+              {/* Overflow Placement Banner in Modal */}
+              {caseDetails?.is_overflow && (
+                <div className="p-3 bg-amber-950/80 border border-amber-600/80 text-amber-200 rounded-xl text-xs flex items-center space-x-2.5 shadow-md">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold uppercase tracking-wider text-[11px] block text-amber-300">
+                      Surge Overflow Diversion
+                    </span>
+                    <span className="text-slate-200">
+                      Patient originally requested <span className="font-bold text-white">{caseDetails.department_name || getDeptName(caseDetails.department_id)}</span> and was overflow-allocated to Bed <span className="font-mono text-cyan-300 font-bold">{caseDetails.assigned_bed_id}</span> in <span className="font-bold text-white">{caseDetails.assigned_bed_department_name || getDeptName(caseDetails.assigned_bed_department)}</span>.
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {caseDetails && (
                 <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                   <div>
-                    <span className="block text-slate-500 text-[10px] uppercase font-semibold">Department</span>
+                    <span className="block text-slate-500 text-[10px] uppercase font-semibold">Requested Dept</span>
                     <span className="font-semibold text-slate-200">{caseDetails.department_name || caseDetails.department_id}</span>
                   </div>
                   <div>
@@ -370,11 +499,11 @@ export default function AdminCaseLogs() {
                   </div>
                   <div>
                     <span className="block text-slate-500 text-[10px] uppercase font-semibold">
-                      {selectedCase.type === 'patient' ? 'Assigned Nurse' : 'Room / Floor'}
+                      {(selectedCase.type === 'patient' || selectedCase.id?.startsWith('PAT-')) ? 'Bed / Location' : 'Room / Floor'}
                     </span>
                     <span className="font-semibold text-slate-200">
-                      {selectedCase.type === 'patient'
-                        ? caseDetails.assigned_nurse_name || 'None'
+                      {(selectedCase.type === 'patient' || selectedCase.id?.startsWith('PAT-'))
+                        ? `${caseDetails.assigned_bed_id || 'Triage'} (${caseDetails.assigned_bed_department_name || caseDetails.department_name || 'Unit'})`
                         : `${caseDetails.room_number || 'Room 101'} (${caseDetails.floor || '1st Fl'})`}
                     </span>
                   </div>
@@ -438,8 +567,8 @@ export default function AdminCaseLogs() {
                                 }`}
                               >
                                 {isNote
-                                  ? (item.note_type || 'clinical_note').replace('_', ' ')
-                                  : (item.event_type || 'event').replace('_', ' ')}
+                                  ? (item.note_type ?? 'clinical_note').replace(/_/g, ' ')
+                                  : (item.event_type ?? 'event').replace(/_/g, ' ')}
                               </span>
                               <span className="text-[10px] font-mono text-slate-500">
                                 {item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}
@@ -454,7 +583,7 @@ export default function AdminCaseLogs() {
                               {isNote ? (
                                 <span>Author: {item.author_name || item.author_id || 'Clinician'}</span>
                               ) : (
-                                <span>Triggered By: {item.triggered_by || 'System Engine'}</span>
+                                <span>Triggered By: {item.triggered_by || item.author || 'System Engine'}</span>
                               )}
                             </div>
                           </div>

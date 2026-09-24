@@ -473,4 +473,61 @@ def test_admin_case_log_appointments_browser():
     assert any(a["patient_name"] == "Bob Builder" for a in apts_list)
 
 
+def test_admin_inpatient_case_log_and_overflow():
+    # 1. Admin login
+    res_admin = client.post("/admin/login", json={"password": "changeme"})
+    admin_token = res_admin.json()["token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # 2. Intake a patient into ER
+    res_intake = client.post("/patients/intake", json={
+        "name": "David Copperfield",
+        "age": 55,
+        "department_needed": "er",
+        "severity": "critical",
+        "reason_for_visit": "Chest Pain",
+        "predicted_stay_hours": 6.0
+    }, headers=admin_headers)
+    assert res_intake.status_code == 200
+    p_id = res_intake.json()["patient_id"]
+
+    # 3. Fill ER beds to force overflow on allocation
+    from src.db.models import Bed
+    from src.api.db import SessionLocal
+    from src.allocation.engine import HospitalAllocationEngine
+
+    db = SessionLocal()
+    er_beds = db.query(Bed).filter_by(department_id="er").all()
+    for b in er_beds:
+        b.status = "occupied"
+    db.commit()
+
+    # Run allocation cycle
+    engine = HospitalAllocationEngine()
+    engine.run_allocation_cycle(db)
+
+    # 4. Fetch patient case log with admin token
+    res_case = client.get(f"/case-log/patient/{p_id}", headers=admin_headers)
+    assert res_case.status_code == 200
+    case_data = res_case.json()
+    assert case_data["patient_id"] == p_id
+    assert case_data["department_id"] == "er"
+    assert case_data["assigned_bed_id"] is not None
+    # Assigned bed should be in overflow department (ICU or general ward), not ER
+    assert case_data["assigned_bed_department"] != "er"
+    assert case_data["is_overflow"] is True
+
+    # 5. Check GET /patients also has overflow fields
+    res_pts = client.get("/patients", headers=admin_headers)
+    assert res_pts.status_code == 200
+    p_entry = next((p for p in res_pts.json() if p["patient_id"] == p_id), None)
+    assert p_entry is not None
+    assert p_entry["is_overflow"] is True
+    assert p_entry["department_needed"] == "er"
+    assert p_entry["assigned_bed_department"] != "er"
+
+    db.close()
+
+
+
 

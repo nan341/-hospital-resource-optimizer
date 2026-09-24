@@ -62,8 +62,14 @@ class PatientResponse(BaseModel):
     status: str
     assigned_bed_id: Optional[str] = None
     assigned_staff_id: Optional[str] = None
+    assigned_doctor_id: Optional[str] = None
+    assigned_nurse_id: Optional[str] = None
+    name: Optional[str] = None
     age: Optional[int] = None
     reason_for_visit: Optional[str] = None
+    assigned_bed_department: Optional[str] = None
+    is_overflow: bool = False
+
 
 class PatientIntakeRequest(BaseModel):
     name: Optional[str] = Field(default=None, max_length=150, description="Patient full name")

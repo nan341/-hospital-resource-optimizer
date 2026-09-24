@@ -151,6 +151,10 @@ def get_patient_case_log(
     # Sort timeline chronologically (oldest to newest)
     timeline.sort(key=lambda item: item["timestamp"] or "")
 
+    bed = patient.assigned_bed
+    bed_dept = bed.department if bed else None
+    is_overflow = bool(bed and bed.department_id != patient.department_needed)
+
     return {
         "patient_id": patient.patient_id,
         "name": patient.name,
@@ -166,10 +170,14 @@ def get_patient_case_log(
         "assigned_nurse_id": patient.assigned_nurse_id,
         "assigned_nurse_name": nurse.role if nurse else None,
         "assigned_bed_id": patient.assigned_bed_id,
+        "assigned_bed_department": bed.department_id if bed else None,
+        "assigned_bed_department_name": bed_dept.name if bed_dept else (bed.department_id if bed else None),
+        "is_overflow": is_overflow,
         "arrival_time": patient.arrival_time.isoformat() if patient.arrival_time else None,
         "status": patient.status,
         "timeline": timeline
     }
+
 
 
 @router.get("/appointment/{appointment_id}")

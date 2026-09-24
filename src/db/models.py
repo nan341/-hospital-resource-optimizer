@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional, Dict, Any
 from sqlalchemy import (
     Column,
     Integer,
@@ -12,6 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from src.api.db import Base
+
 
 class Department(Base):
     __tablename__ = "departments"
@@ -100,6 +102,17 @@ class Patient(Base):
     assigned_staff = relationship("Staff", foreign_keys=[assigned_staff_id], post_update=True)
     assigned_doctor = relationship("Staff", foreign_keys=[assigned_doctor_id], post_update=True)
     assigned_nurse = relationship("Staff", foreign_keys=[assigned_nurse_id], post_update=True)
+
+    @property
+    def assigned_bed_department(self) -> Optional[str]:
+        return self.assigned_bed.department_id if self.assigned_bed else None
+
+    @property
+    def is_overflow(self) -> bool:
+        if self.assigned_bed and self.assigned_bed.department_id != self.department_needed:
+            return True
+        return False
+
 
 
 class Appointment(Base):
